@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+  <title>بذور الكاكي الفاخرة | اطلب الآن</title>
+  <meta name="description" content="بذور الكاكي الفاخرة، بذور طبيعية مختارة ومناسبة للزراعة المنزلية، توصيل لكافة الولايات والدفع عند الاستلام.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- 1. ROLLING TAPE (MARQUEE) -->
+  <header class="marquee-bar" aria-label="شريط الإعلانات">
+    <div class="marquee-content">
+      <div class="marquee-item">
+        <span>شحن مجاني لكافة الولايات</span>
+        <span class="marquee-dot">●</span>
+        <span>بذور طبيعية 100%</span>
+        <span class="marquee-dot">●</span>
+        <span>الدفع عند الاستلام</span>
+      </div>
+      <div class="marquee-item" aria-hidden="true">
+        <span>شحن مجاني لكافة الولايات</span>
+        <span class="marquee-dot">●</span>
+        <span>بذور طبيعية 100%</span>
+        <span class="marquee-dot">●</span>
+        <span>الدفع عند الاستلام</span>
+      </div>
+      <div class="marquee-item" aria-hidden="true">
+        <span>شحن مجاني لكافة الولايات</span>
+        <span class="marquee-dot">●</span>
+        <span>بذور طبيعية 100%</span>
+        <span class="marquee-dot">●</span>
+        <span>الدفع عند الاستلام</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- 2. HERO SECTION (ABOVE THE FOLD) -->
+    <section class="hero-section">
+      <!-- Product Image Slider -->
+      <div class="slider-wrapper" id="heroSlider" aria-roledescription="carousel">
+        <button class="slider-btn prev" id="sliderPrev" aria-label="الصورة السابقة">‹</button>
+        <button class="slider-btn next" id="sliderNext" aria-label="الصورة التالية">›</button>
+
+        <div class="slider-track" id="sliderTrack">
+          <div class="slide">
+            <img src="assets/slide-1.jpg" alt="بذور الكاكي الفاخرة - العبوة الأصلية" width="500" height="500" fetchpriority="high">
+          </div>
+          <div class="slide">
+            <img src="assets/slide-2.jpg" alt="بذور الكاكي عالية الجودة مقربة" width="500" height="500" loading="lazy">
+          </div>
+          <div class="slide">
+            <img src="assets/slide-3.jpg" alt="شتلة شجرة الكاكي سريعة النمو" width="500" height="500" loading="lazy">
+          </div>
+        </div>
+
+        <div class="slider-dots" id="sliderDots">
+          <span class="slider-dot active" data-index="0"></span>
+          <span class="slider-dot" data-index="1"></span>
+          <span class="slider-dot" data-index="2"></span>
+        </div>
+      </div>
+
+      <!-- Swipe hint -->
+      <div class="swipe-hint">← اسحب لرؤية المزيد →</div>
+
+      <!-- Hero Product Info -->
+      <div class="hero-content">
+        <h1 class="hero-title">بذور الكاكي</h1>
+        <p class="hero-subtitle">طبيعية 100% · زراعة منزلية سهلة · توصيل لكافة الولايات</p>
+
+        <!-- Dynamic Single CTA Button: always visible above fold, never duplicated -->
+        <a href="#order-section" class="cta-btn-primary" id="heroCtaBtn">
+          <span>اطلب الآن — الدفع عند الاستلام</span>
+        </a>
+      </div>
+    </section>
+
+    <!-- 3. OPEN WHITE FEATURES GRID -->
+    <section class="features-grid">
+      <div class="feature-item">
+        <div class="feature-icon">🌿</div>
+        <div class="feature-label">طبيعية 100%</div>
+      </div>
+      <div class="feature-item">
+        <div class="feature-icon">🌱</div>
+        <div class="feature-label">زراعة منزلية</div>
+      </div>
+      <div class="feature-item">
+        <div class="feature-icon">📦</div>
+        <div class="feature-label">توصيل مضمون</div>
+      </div>
+    </section>
+
+    <!-- 4. ORDER FORM SECTION -->
+    <section class="order-section" id="order-section">
+      <div class="order-card">
+        <div class="order-header">
+          <h2 class="order-title">استمارة الطلب</h2>
+          <p class="order-subtitle">املأ بياناتك وسيتم التوصيل حتى باب منزلك</p>
+        </div>
+
+        <form id="kakiOrderForm" novalidate>
+          <!-- Dynamic Quantity Offer Selection (1, 2, 3) -->
+          <label class="offers-label">اختر الكمية والعرض المناسب:</label>
+          <div class="offers-grid">
+            <div class="offer-option" data-qty="1">
+              <span class="offer-qty">1 علبة</span>
+              <span class="offer-price">2,500 د.ج</span>
+            </div>
+            <div class="offer-option selected" data-qty="2">
+              <span class="offer-qty">2 علب</span>
+              <span class="offer-price">4,200 د.ج</span>
+              <span class="offer-save">وفّر 800 د.ج</span>
+            </div>
+            <div class="offer-option" data-qty="3">
+              <span class="offer-qty">3 علب</span>
+              <span class="offer-price">5,600 د.ج</span>
+              <span class="offer-save">وفّر 1,900 د.ج</span>
+            </div>
+          </div>
+
+          <!-- Full Name -->
+          <div class="form-group">
+            <label class="form-label" for="fullName">الاسم الكامل *</label>
+            <input type="text" id="fullName" class="form-input" placeholder="مثال: يوسف قادري" required autocomplete="name">
+          </div>
+
+          <!-- Phone Number -->
+          <div class="form-group">
+            <label class="form-label" for="phone">رقم الهاتف *</label>
+            <input type="tel" id="phone" class="form-input" placeholder="مثال: 0555123456" required autocomplete="tel" dir="ltr" style="text-align: right;">
+          </div>
+
+          <!-- Willaya & Baladia Rows -->
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="willayaSelect">الولاية *</label>
+              <select id="willayaSelect" class="form-select" required>
+                <option value="">اختر الولاية</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="baladiaSelect">البلدية *</label>
+              <select id="baladiaSelect" class="form-select" required disabled>
+                <option value="">اختر البلدية</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Dynamic Price Summary Box -->
+          <div class="price-summary-box">
+            <span class="price-summary-label">المبلغ الإجمالي المستحق:</span>
+            <span class="price-summary-value">
+              <span class="price-old-strike" id="oldPriceDisplay">5,000 د.ج</span>
+              <span id="totalPriceDisplay">4,200 د.ج</span>
+            </span>
+          </div>
+
+          <!-- Confirm Order Button -->
+          <button type="submit" class="submit-btn" id="submitOrderBtn">
+            <span>تأكيد الطلب الآن</span>
+          </button>
+
+          <!-- Cash On Delivery Trust Badge -->
+          <div class="trust-badge-bottom">
+            <span>💵</span>
+            <span>الدفع عند الاستلام بعد معاينة المنتج</span>
+          </div>
+        </form>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- 5. CUSTOMER-FOCUSED FOOTER -->
+  <footer class="main-footer">
+    <div class="container">
+
+      <!-- Delivery & Trust Info Grid -->
+      <div class="footer-info-grid">
+        <div class="footer-info-item">
+          <div class="footer-info-icon">🚚</div>
+          <div class="footer-info-label">التوصيل</div>
+          <div class="footer-info-val">2 – 5 أيام لكافة الولايات</div>
+        </div>
+        <div class="footer-info-item">
+          <div class="footer-info-icon">💵</div>
+          <div class="footer-info-label">الدفع</div>
+          <div class="footer-info-val">عند الاستلام فقط</div>
+        </div>
+        <div class="footer-info-item">
+          <div class="footer-info-icon">🔄</div>
+          <div class="footer-info-label">الإرجاع</div>
+          <div class="footer-info-val">مضمون خلال 7 أيام</div>
+        </div>
+      </div>
+
+      <!-- WhatsApp Contact -->
+      <a href="https://wa.me/213555123456" class="footer-wa-btn" target="_blank" rel="noopener">
+        <span class="footer-wa-icon">💬</span>
+        <span>تواصل معنا على واتساب</span>
+      </a>
+
+      <div class="footer-copy">
+        جميع الحقوق محفوظة © 2026 · <a href="admin.html" style="color:var(--grey); text-decoration:none;">إدارة</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ORDER SUCCESS MODAL -->
+  <div class="modal-overlay" id="successModal">
+    <div class="modal-box">
+      <div class="modal-icon">✓</div>
+      <h3 class="modal-title">تم استلام طلبك بنجاح!</h3>
+      <p class="modal-text">سيتصل بك مندوب التوصيل لتأكيد موعد التسليم.</p>
+      <div class="modal-info-pill">
+        <div>رقم الطلب: <strong id="modalOrderId">-</strong></div>
+        <div id="modalOrderDetails">-</div>
+      </div>
+      <button class="modal-close-btn" id="modalCloseBtn">حسناً، تم</button>
+    </div>
+  </div>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

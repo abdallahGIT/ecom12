@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>لوحة التحكم | بذور الكاكي</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+
+  <!-- TOP ADMIN NAVBAR -->
+  <header class="admin-navbar">
+    <div class="nav-brand">
+      <div class="brand-icon">🌱</div>
+      <div class="brand-text">
+        <h1>بذور الكاكي — لوحة التحكم</h1>
+        <span>إدارة الطلبات · المخزون · الشحن</span>
+      </div>
+    </div>
+    <div class="nav-actions">
+      <a href="index.html" class="nav-btn" target="_blank">📲 المتجر</a>
+      <button class="nav-btn success" id="openProductModalBtn">🌱 + منتج بذور جديد</button>
+      <button class="nav-btn" id="openApiModalBtn">🔗 APIs</button>
+      <button class="nav-btn primary" id="addOrderBtn">+ طلب يدوي</button>
+    </div>
+  </header>
+
+  <main class="admin-container">
+
+    <!-- ── METRICS ROW ── -->
+    <section class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-info">
+          <h3>إجمالي الطلبات</h3>
+          <div class="metric-value" id="metricTotal">0</div>
+        </div>
+        <div class="metric-badge">📋</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-info">
+          <h3>جديد / انتظار</h3>
+          <div class="metric-value" id="metricPending" style="color:#D97706;">0</div>
+        </div>
+        <div class="metric-badge">⏳</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-info">
+          <h3>مؤكد / موصّل</h3>
+          <div class="metric-value" id="metricConfirmed" style="color:#10B981;">0</div>
+        </div>
+        <div class="metric-badge">✅</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-info">
+          <h3>المداخيل (مؤكد + موصّل)</h3>
+          <div class="metric-value" id="metricRevenue">0 د.ج</div>
+        </div>
+        <div class="metric-badge">💰</div>
+      </div>
+    </section>
+
+    <!-- ── STOCK & QUICK ACTIONS ROW ── -->
+    <section class="ops-row">
+
+      <!-- Stock Management -->
+      <div class="ops-card stock-card">
+        <div class="ops-card-header">
+          <span class="ops-card-title">📦 إدارة المخزون</span>
+        </div>
+        <div class="stock-body">
+          <div class="stock-item">
+            <span class="stock-label">المخزون الحالي (علب)</span>
+            <div class="stock-control">
+              <button class="stock-btn minus" id="stockMinus">−</button>
+              <span class="stock-count" id="stockCount">50</span>
+              <button class="stock-btn plus" id="stockPlus">+</button>
+            </div>
+          </div>
+          <div class="stock-item">
+            <span class="stock-label">الطلبات المعلّقة</span>
+            <span class="stock-val pending" id="stockPending">0 علبة</span>
+          </div>
+          <div class="stock-item">
+            <span class="stock-label">الرصيد المتاح</span>
+            <span class="stock-val available" id="stockAvailable">50 علبة</span>
+          </div>
+          <div class="stock-item">
+            <span class="stock-label">حالة المخزون</span>
+            <span class="stock-status-badge" id="stockStatusBadge">جيد ✓</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Pipeline / Workflow -->
+      <div class="ops-card pipeline-card">
+        <div class="ops-card-header">
+          <span class="ops-card-title">🔄 خط سير الطلبات</span>
+        </div>
+        <div class="pipeline-steps">
+          <div class="pipe-step">
+            <div class="pipe-dot new-dot"></div>
+            <div class="pipe-info">
+              <span class="pipe-label">جديد</span>
+              <span class="pipe-count" id="pipeNew">0</span>
+            </div>
+          </div>
+          <div class="pipe-arrow">←</div>
+          <div class="pipe-step">
+            <div class="pipe-dot conf-dot"></div>
+            <div class="pipe-info">
+              <span class="pipe-label">مؤكد</span>
+              <span class="pipe-count" id="pipeConf">0</span>
+            </div>
+          </div>
+          <div class="pipe-arrow">←</div>
+          <div class="pipe-step">
+            <div class="pipe-dot deliv-dot"></div>
+            <div class="pipe-info">
+              <span class="pipe-label">موصّل</span>
+              <span class="pipe-count" id="pipeDeliv">0</span>
+            </div>
+          </div>
+          <div class="pipe-arrow">←</div>
+          <div class="pipe-step">
+            <div class="pipe-dot cancel-dot"></div>
+            <div class="pipe-info">
+              <span class="pipe-label">ملغى</span>
+              <span class="pipe-count" id="pipeCancel">0</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bulk Quick Actions -->
+        <div class="bulk-actions">
+          <span class="bulk-label">إجراء جماعي على المحدّد:</span>
+          <div class="bulk-btns">
+            <button class="bulk-btn green" onclick="bulkAction('confirmed')">✓ تأكيد</button>
+            <button class="bulk-btn blue" onclick="bulkAction('delivered')">📦 توصيل</button>
+            <button class="bulk-btn red" onclick="bulkAction('cancelled')">✕ إلغاء</button>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ── SEED PRODUCTS CATALOG (NEON DB) ── -->
+    <section class="products-panel">
+      <div class="panel-header-bar">
+        <div class="panel-title-wrap">
+          <span class="panel-icon">🌱</span>
+          <div>
+            <h2>كتالوج منتجات البذور</h2>
+            <span class="panel-sub">متعدد المنتجات · متصل بقاعدة بيانات Neon PostgreSQL ⚡</span>
+          </div>
+        </div>
+        <div class="panel-actions-wrap">
+          <button class="btn-action green" id="openProductModalBtn2">➕ إضافة منتج بذور جديد</button>
+        </div>
+      </div>
+
+      <!-- Products Grid populated dynamically from Neon DB -->
+      <div class="products-grid" id="productsGrid">
+        <div class="loading-placeholder">جاري جلب منتجات البذور من قاعدة بيانات Neon...</div>
+      </div>
+    </section>
+
+    <!-- ── ORDERS TABLE ── -->
+    <section class="table-panel">
+      <div class="table-toolbar">
+        <div class="search-box">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="tableSearch" class="search-input" placeholder="بحث بالاسم، هاتف، ولاية، رقم الطلب...">
+        </div>
+
+        <div class="filter-group">
+          <select id="statusFilter" class="filter-select">
+            <option value="all">كل الحالات</option>
+            <option value="new">جديد ⏳</option>
+            <option value="confirmed">مؤكد ✓</option>
+            <option value="delivered">موصّل 📦</option>
+            <option value="cancelled">ملغى ✕</option>
+          </select>
+
+          <button id="exportCsvBtn" class="btn-action">📥 Excel</button>
+          <button class="btn-action" onclick="selectAllVisible()">☑ تحديد الكل</button>
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table class="excel-table" id="ordersTable">
+          <thead>
+            <tr>
+              <th style="width:36px;"><input type="checkbox" id="masterCheck" onchange="toggleAllCheckboxes(this)"></th>
+              <th>رقم الطلب</th>
+              <th>الاسم</th>
+              <th>الهاتف</th>
+              <th>الولاية · البلدية</th>
+              <th>الكمية</th>
+              <th>المبلغ</th>
+              <th>الحالة</th>
+              <th>التاريخ</th>
+              <th style="min-width:200px;">الإجراءات السريعة</th>
+            </tr>
+          </thead>
+          <tbody id="ordersTableBody">
+            <!-- Rows rendered by admin.js -->
+          </tbody>
+        </table>
+      </div>
+
+      <div class="table-footer-bar">
+        <span>عرض <span id="tableCountLabel">0</span> طلب</span>
+        <span style="color:#94A3B8; font-size:0.78rem;">متوافق مع EcoTrack · شركات الشحن الجزائرية</span>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ══ ADD MANUAL ORDER MODAL ══ -->
+  <div class="admin-modal-overlay" id="addOrderModal">
+    <div class="admin-modal-card">
+      <div class="admin-modal-header">
+        <h3 class="admin-modal-title">+ إضافة طلب يدوي</h3>
+        <button class="admin-modal-close" id="closeAddModal">✕</button>
+      </div>
+      <form id="manualOrderForm">
+        <div class="admin-modal-body">
+          <div class="modal-form-row">
+            <div class="modal-form-group">
+              <label>الاسم الكامل *</label>
+              <input type="text" id="newFullName" class="search-input" placeholder="اسم الزبون" required>
+            </div>
+            <div class="modal-form-group">
+              <label>رقم الهاتف *</label>
+              <input type="tel" id="newPhone" class="search-input" placeholder="0555..." required dir="ltr" style="text-align:right;">
+            </div>
+          </div>
+          <div class="modal-form-row">
+            <div class="modal-form-group">
+              <label>الولاية *</label>
+              <select id="newWillayaSelect" class="filter-select" style="width:100%;" required>
+                <option value="">اختر الولاية</option>
+              </select>
+            </div>
+            <div class="modal-form-group">
+              <label>البلدية</label>
+              <select id="newBaladiaSelect" class="filter-select" style="width:100%;">
+                <option value="">اختر البلدية</option>
+              </select>
+            </div>
+          </div>
+          <div class="modal-form-row">
+            <div class="modal-form-group">
+              <label>الكمية</label>
+              <select id="newQty" class="filter-select" style="width:100%;">
+                <option value="1">1 علبة — 2,500 د.ج</option>
+                <option value="2" selected>2 علب — 4,200 د.ج</option>
+                <option value="3">3 علب — 5,600 د.ج</option>
+              </select>
+            </div>
+            <div class="modal-form-group">
+              <label>السعر (د.ج)</label>
+              <input type="number" id="newPrice" class="search-input" value="4200" required>
+            </div>
+          </div>
+          <div class="modal-form-group" style="margin-top:10px;">
+            <label>ملاحظة (اختياري)</label>
+            <input type="text" id="newNote" class="search-input" placeholder="أي تفاصيل إضافية...">
+          </div>
+        </div>
+        <div class="admin-modal-footer">
+          <button type="button" class="btn-action" id="cancelAddModal">إلغاء</button>
+          <button type="submit" class="btn-action dark">حفظ الطلب ✓</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ══ API INTEGRATIONS MODAL ══ -->
+  <div class="admin-modal-overlay" id="apiSettingsModal">
+    <div class="admin-modal-card">
+      <div class="admin-modal-header">
+        <h3 class="admin-modal-title">🔗 إعدادات الربط (APIs)</h3>
+        <button class="admin-modal-close" id="closeApiModal">✕</button>
+      </div>
+      <div class="admin-modal-body">
+        <div class="api-slot-box">
+          <div class="api-slot-title">🔵 Facebook Pixel</div>
+          <label>Pixel ID:</label>
+          <input type="text" id="pixelIdInput" class="search-input" placeholder="123456789012345" dir="ltr">
+          <p class="api-hint">يُرسل PageView, ViewContent, Purchase تلقائياً.</p>
+        </div>
+        <div class="api-slot-box">
+          <div class="api-slot-title">📦 EcoTrack Logistics API</div>
+          <div style="margin-bottom:10px;">
+            <label>API Endpoint:</label>
+            <input type="text" id="ecotrackUrlInput" class="search-input" value="https://api.ecotrack.dz/v1/orders" dir="ltr">
+          </div>
+          <div style="margin-bottom:10px;">
+            <label>API Token (سري):</label>
+            <input type="password" id="ecotrackKeyInput" class="search-input" placeholder="توكن إيكوتراك" dir="ltr">
+          </div>
+          <div>
+            <label>Store ID:</label>
+            <input type="text" id="ecotrackStoreInput" class="search-input" placeholder="معرف المتجر" dir="ltr">
+          </div>
+          <p class="api-hint">كل طلب مؤكد يُرسل تلقائياً لتوليد بوليصة الشحن.</p>
+        </div>
+      </div>
+      <div class="admin-modal-footer">
+        <button type="button" class="btn-action dark" id="saveApiSettingsBtn">حفظ الإعدادات</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="data.js"></script>
+  <script src="admin.js"></script>
+</body>
+</html>
