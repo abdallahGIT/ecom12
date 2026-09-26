@@ -218,10 +218,10 @@ function initOrderForm() {
 
     const submitBtn = document.getElementById("submitOrderBtn");
     submitBtn.disabled = true;
-    submitBtn.textContent = "جاري التأكيد...";
+    submitBtn.innerHTML = `<span>جاري التأكيد...</span>`;
 
     // Construct Order Payload
-    const newOrder = OrderManager.addOrder({
+    let newOrder = {
       fullName,
       phone,
       willaya: wilayaObj ? wilayaObj.name : "غير محدد",
@@ -230,9 +230,28 @@ function initOrderForm() {
       quantity: selectedQty,
       price: offer.price,
       productName: APP_CONFIG.product.name
-    });
+    };
 
-    // 1. Fire Facebook Pixel Purchase Event
+    // 1. Sync with PostgreSQL Backend API if available
+    try {
+      const resp = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newOrder)
+      });
+      const data = await resp.json();
+      if (data && data.success && data.order) {
+        newOrder.id = data.order.id;
+      }
+    } catch (err) {
+      console.warn("API offline, fallback to local storage:", err);
+    }
+
+    // 2. Save locally in OrderManager
+    const savedOrder = OrderManager.addOrder(newOrder);
+    if (!newOrder.id) newOrder.id = savedOrder.id;
+
+    // 3. Fire Facebook Pixel Purchase Event
     APP_CONFIG.pixel.track("Purchase", {
       content_name: APP_CONFIG.product.name,
       currency: "DZD",
@@ -240,20 +259,23 @@ function initOrderForm() {
       num_items: selectedQty
     });
 
-    // 2. Dispatch to EcoTrack API
+    // 4. Dispatch to EcoTrack API
     await APP_CONFIG.ecotrack.sendOrder(newOrder);
 
-    // 3. Display Confirmation Modal
-    document.getElementById("modalOrderId").textContent = newOrder.id;
+    // 5. Update submit button to confirmed state
+    submitBtn.classList.add("confirmed");
+    submitBtn.innerHTML = `<span>✓ تم تأكيد طلبك بنجاح!</span>`;
+    submitBtn.disabled = true;
+
+    // 6. Display Confirmation Modal
+    document.getElementById("modalOrderId").textContent = newOrder.id || savedOrder.id;
     document.getElementById("modalOrderDetails").textContent = 
       `${fullName} · ${wilayaObj.name} (${baladia}) · ${selectedQty} علب · ${offer.price} ${APP_CONFIG.product.currency}`;
 
     modal.classList.add("active");
 
-    // Reset Form
+    // Reset Form inputs for fresh state if they dismiss modal
     form.reset();
-    submitBtn.disabled = false;
-    submitBtn.innerHTML = `<span>تأكيد الطلب</span>`;
   });
 
   if (modalClose && modal) {

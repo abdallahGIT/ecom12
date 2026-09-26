@@ -203,14 +203,30 @@ function escapeHtml(text) {
 // ======================================================
 // 3. ORDER ACTIONS (CONFIRM, CANCEL, DELETE)
 // ======================================================
-window.handleStatusChange = function(orderId, newStatus) {
+window.handleStatusChange = async function(orderId, newStatus) {
   OrderManager.updateStatus(orderId, newStatus);
+  try {
+    await fetch(`/api/orders/${encodeURIComponent(orderId)}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: newStatus })
+    });
+  } catch (err) {
+    console.warn("Backend status update offline:", err);
+  }
   loadOrders();
 };
 
-window.handleDeleteOrder = function(orderId) {
+window.handleDeleteOrder = async function(orderId) {
   if (confirm(`هل أنت متأكد من حذف الطلب ${orderId} نهائياً؟`)) {
     OrderManager.deleteOrder(orderId);
+    try {
+      await fetch(`/api/orders/${encodeURIComponent(orderId)}`, {
+        method: 'DELETE'
+      });
+    } catch (err) {
+      console.warn("Backend delete offline:", err);
+    }
     loadOrders();
   }
 };

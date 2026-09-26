@@ -549,6 +549,25 @@ body {
   transform: scale(0.98);
 }
 
+.submit-btn.confirmed {
+  background: #16A34A;
+  border-color: #16A34A;
+  color: #FFFFFF;
+  cursor: default;
+  box-shadow: 0 4px 16px rgba(22, 163, 74, 0.25);
+  pointer-events: none;
+}
+
+.submit-btn.confirmed:hover {
+  background: #16A34A;
+  color: #FFFFFF;
+}
+
+.submit-btn:disabled:not(.confirmed) {
+  opacity: 0.7;
+  cursor: wait;
+}
+
 .trust-badge-bottom {
   text-align: center;
   font-size: 0.85rem;
