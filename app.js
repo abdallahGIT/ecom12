@@ -189,15 +189,15 @@ function initOrderForm() {
     const willayaId = parseInt(willayaSelect.value, 10);
     const baladia = baladiaSelect.value.trim();
 
-    if (!fullName) {
-      alert("يرجى كتابة الاسم الكامل");
-      fullNameInput.focus();
-      return;
-    }
-
     if (!phone || phone.length < 9) {
       alert("يرجى إدخال رقم هاتف صحيح");
       phoneInput.focus();
+      return;
+    }
+
+    if (!fullName) {
+      alert("يرجى كتابة الاسم الكامل");
+      fullNameInput.focus();
       return;
     }
 

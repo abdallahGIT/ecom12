@@ -15,22 +15,16 @@
   <header class="marquee-bar" aria-label="شريط الإعلانات">
     <div class="marquee-content">
       <div class="marquee-item">
-        <span>شحن مجاني لكافة الولايات</span>
-        <span class="marquee-dot">●</span>
         <span>بذور طبيعية 100%</span>
         <span class="marquee-dot">●</span>
         <span>الدفع عند الاستلام</span>
       </div>
       <div class="marquee-item" aria-hidden="true">
-        <span>شحن مجاني لكافة الولايات</span>
-        <span class="marquee-dot">●</span>
         <span>بذور طبيعية 100%</span>
         <span class="marquee-dot">●</span>
         <span>الدفع عند الاستلام</span>
       </div>
       <div class="marquee-item" aria-hidden="true">
-        <span>شحن مجاني لكافة الولايات</span>
-        <span class="marquee-dot">●</span>
         <span>بذور طبيعية 100%</span>
         <span class="marquee-dot">●</span>
         <span>الدفع عند الاستلام</span>
@@ -66,13 +60,9 @@
         </div>
       </div>
 
-      <!-- Swipe hint -->
-      <div class="swipe-hint">← اسحب لرؤية المزيد →</div>
-
       <!-- Hero Product Info -->
       <div class="hero-content">
         <h1 class="hero-title">بذور الكاكي</h1>
-        <p class="hero-subtitle">طبيعية 100% · زراعة منزلية سهلة · توصيل لكافة الولايات</p>
 
         <!-- Dynamic Single CTA Button: always visible above fold, never duplicated -->
         <a href="#order-section" class="cta-btn-primary" id="heroCtaBtn">
@@ -102,12 +92,10 @@
       <div class="order-card">
         <div class="order-header">
           <h2 class="order-title">استمارة الطلب</h2>
-          <p class="order-subtitle">املأ بياناتك وسيتم التوصيل حتى باب منزلك</p>
         </div>
 
         <form id="kakiOrderForm" novalidate>
           <!-- Dynamic Quantity Offer Selection (1, 2, 3) -->
-          <label class="offers-label">اختر الكمية والعرض المناسب:</label>
           <div class="offers-grid">
             <div class="offer-option" data-qty="1">
               <span class="offer-qty">1 علبة</span>
@@ -125,16 +113,16 @@
             </div>
           </div>
 
+          <!-- Phone Number (First) -->
+          <div class="form-group">
+            <label class="form-label" for="phone">رقم الهاتف *</label>
+            <input type="tel" id="phone" class="form-input" placeholder="مثال: 0555123456" required autocomplete="tel" dir="ltr" style="text-align: right;">
+          </div>
+
           <!-- Full Name -->
           <div class="form-group">
             <label class="form-label" for="fullName">الاسم الكامل *</label>
             <input type="text" id="fullName" class="form-input" placeholder="مثال: يوسف قادري" required autocomplete="name">
-          </div>
-
-          <!-- Phone Number -->
-          <div class="form-group">
-            <label class="form-label" for="phone">رقم الهاتف *</label>
-            <input type="tel" id="phone" class="form-input" placeholder="مثال: 0555123456" required autocomplete="tel" dir="ltr" style="text-align: right;">
           </div>
 
           <!-- Willaya & Baladia Rows -->
