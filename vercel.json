@@ -1,9 +1,13 @@
 {
   "version": 2,
-  "rewrites": [
+  "framework": null,
+  "builds": [
     {
-      "source": "/api/(.*)",
-      "destination": "/api/index.js"
+      "src": "api/index.js",
+      "use": "@vercel/node"
     }
+  ],
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index.js" }
   ]
 }
