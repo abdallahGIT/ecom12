@@ -27,131 +27,140 @@ const pool = new Pool({
   connectionTimeoutMillis: 10000
 });
 
-// Initialize database schema
+// Cache database initialization promise
+let dbInitPromise = null;
+
 async function initDb() {
-  let client;
-  try {
-    client = await pool.connect();
-    console.log('✅ Connected to Neon PostgreSQL database successfully.');
+  if (dbInitPromise) return dbInitPromise;
 
-    // 1. Products table (Seed products catalog)
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS products (
-        id SERIAL PRIMARY KEY,
-        slug VARCHAR(120) UNIQUE NOT NULL,
-        name VARCHAR(255) NOT NULL,
-        subtitle TEXT,
-        description TEXT,
-        price_1 INT NOT NULL DEFAULT 2500,
-        price_2 INT NOT NULL DEFAULT 4200,
-        price_3 INT NOT NULL DEFAULT 5600,
-        stock INT NOT NULL DEFAULT 50,
-        images JSONB NOT NULL DEFAULT '[]'::jsonb,
-        features JSONB NOT NULL DEFAULT '[]'::jsonb,
-        is_active BOOLEAN NOT NULL DEFAULT true,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
+  dbInitPromise = (async () => {
+    let client;
+    try {
+      client = await pool.connect();
+      console.log('✅ Connected to Neon PostgreSQL database successfully.');
 
-    // 2. Orders table
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS orders (
-        id VARCHAR(50) PRIMARY KEY,
-        product_id INT REFERENCES products(id) ON DELETE SET NULL,
-        product_name VARCHAR(255),
-        full_name VARCHAR(255) NOT NULL,
-        phone VARCHAR(50) NOT NULL,
-        willaya VARCHAR(100) NOT NULL,
-        baladia VARCHAR(100) NOT NULL,
-        quantity INT NOT NULL DEFAULT 1,
-        price INT NOT NULL DEFAULT 0,
-        status VARCHAR(50) NOT NULL DEFAULT 'new',
-        note TEXT,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
-    // 3. Leads table (Auto-captured client info without confirming)
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS leads (
-        id VARCHAR(50) PRIMARY KEY,
-        session_token VARCHAR(100) UNIQUE,
-        product_id INT REFERENCES products(id) ON DELETE SET NULL,
-        product_name VARCHAR(255),
-        full_name VARCHAR(255),
-        phone VARCHAR(50),
-        willaya VARCHAR(100),
-        willaya_id INT,
-        baladia VARCHAR(100),
-        quantity INT NOT NULL DEFAULT 1,
-        price INT NOT NULL DEFAULT 0,
-        status VARCHAR(50) NOT NULL DEFAULT 'abandoned',
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
-    // Migrations to ensure all columns exist
-    await client.query(`
-      ALTER TABLE orders ADD COLUMN IF NOT EXISTS note TEXT;
-      ALTER TABLE orders ALTER COLUMN willaya DROP NOT NULL;
-      ALTER TABLE orders ALTER COLUMN baladia DROP NOT NULL;
-      ALTER TABLE leads ADD COLUMN IF NOT EXISTS willaya_id INT;
-      ALTER TABLE leads ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
-    `);
-
-    // 4. Settings table (Pixel, EcoTrack, etc.)
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS settings (
-        key VARCHAR(100) PRIMARY KEY,
-        value TEXT,
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
-    // Seed default product if table is empty
-    const productCountRes = await client.query('SELECT COUNT(*) FROM products;');
-    const count = parseInt(productCountRes.rows[0].count, 10);
-    if (count === 0) {
-      console.log('🌱 Seeding initial seed product: بذور الكاكي...');
+      // 1. Products table (Seed products catalog)
       await client.query(`
-        INSERT INTO products (slug, name, subtitle, description, price_1, price_2, price_3, stock, images, features, is_active)
-        VALUES (
-          'kaki',
-          'بذور الكاكي الفاخرة',
-          'طبيعية 100% · زراعة منزلية سهلة · توصيل لكافة الولايات',
-          'بذور الكاكي الفاخرة، بذور طبيعية منتقاة بعناية للزراعة في الحدائق والمنازل مع جودة إنتاجية ممتازة وتوصيل لكافة الولايات 58 والدفع عند الاستلام.',
-          2500,
-          4200,
-          5600,
-          50,
-          $1::jsonb,
-          $2::jsonb,
-          true
+        CREATE TABLE IF NOT EXISTS products (
+          id SERIAL PRIMARY KEY,
+          slug VARCHAR(120) UNIQUE NOT NULL,
+          name VARCHAR(255) NOT NULL,
+          subtitle TEXT,
+          description TEXT,
+          price_1 INT NOT NULL DEFAULT 2500,
+          price_2 INT NOT NULL DEFAULT 4200,
+          price_3 INT NOT NULL DEFAULT 5600,
+          stock INT NOT NULL DEFAULT 50,
+          images JSONB NOT NULL DEFAULT '[]'::jsonb,
+          features JSONB NOT NULL DEFAULT '[]'::jsonb,
+          is_active BOOLEAN NOT NULL DEFAULT true,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
-      `, [
-        JSON.stringify([
-          'assets/slide-1.jpg',
-          'assets/slide-2.jpg',
-          'assets/slide-3.jpg'
-        ]),
-        JSON.stringify([
-          { icon: '🌿', label: 'طبيعية 100%' },
-          { icon: '🌱', label: 'زراعة منزلية' },
-          { icon: '📦', label: 'توصيل مضمون' }
-        ])
-      ]);
-    }
+      `);
 
-    console.log('✅ Database schema verified and ready.');
-  } catch (err) {
-    console.error('⚠️ Database connection/initialization error:', err.message);
-  } finally {
-    if (client) client.release();
-  }
+      // 2. Orders table
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS orders (
+          id VARCHAR(50) PRIMARY KEY,
+          product_id INT REFERENCES products(id) ON DELETE SET NULL,
+          product_name VARCHAR(255),
+          full_name VARCHAR(255) NOT NULL,
+          phone VARCHAR(50) NOT NULL,
+          willaya VARCHAR(100),
+          baladia VARCHAR(100),
+          quantity INT NOT NULL DEFAULT 1,
+          price INT NOT NULL DEFAULT 0,
+          status VARCHAR(50) NOT NULL DEFAULT 'new',
+          note TEXT,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+
+      // 3. Leads table (Auto-captured client info without confirming)
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS leads (
+          id VARCHAR(50) PRIMARY KEY,
+          session_token VARCHAR(100) UNIQUE,
+          product_id INT REFERENCES products(id) ON DELETE SET NULL,
+          product_name VARCHAR(255),
+          full_name VARCHAR(255),
+          phone VARCHAR(50),
+          willaya VARCHAR(100),
+          willaya_id INT,
+          baladia VARCHAR(100),
+          quantity INT NOT NULL DEFAULT 1,
+          price INT NOT NULL DEFAULT 0,
+          status VARCHAR(50) NOT NULL DEFAULT 'abandoned',
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+
+      // Migrations to ensure all columns exist
+      await client.query(`
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS note TEXT;
+        ALTER TABLE orders ALTER COLUMN willaya DROP NOT NULL;
+        ALTER TABLE orders ALTER COLUMN baladia DROP NOT NULL;
+        ALTER TABLE leads ADD COLUMN IF NOT EXISTS willaya_id INT;
+        ALTER TABLE leads ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+      `);
+
+      // 4. Settings table (Pixel, EcoTrack, etc.)
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS settings (
+          key VARCHAR(100) PRIMARY KEY,
+          value TEXT,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+
+      // Seed default product if table is empty
+      const productCountRes = await client.query('SELECT COUNT(*) FROM products;');
+      const count = parseInt(productCountRes.rows[0].count, 10);
+      if (count === 0) {
+        console.log('🌱 Seeding initial seed product: بذور الكاكي...');
+        await client.query(`
+          INSERT INTO products (slug, name, subtitle, description, price_1, price_2, price_3, stock, images, features, is_active)
+          VALUES (
+            'kaki',
+            'بذور الكاكي الفاخرة',
+            'طبيعية 100% · زراعة منزلية سهلة · توصيل لكافة الولايات',
+            'بذور الكاكي الفاخرة، بذور طبيعية منتقاة بعناية للزراعة في الحدائق والمنازل مع جودة إنتاجية ممتازة وتوصيل لكافة الولايات 58 والدفع عند الاستلام.',
+            2500,
+            4200,
+            5600,
+            50,
+            $1::jsonb,
+            $2::jsonb,
+            true
+          );
+        `, [
+          JSON.stringify([
+            'assets/slide-1.jpg',
+            'assets/slide-2.jpg',
+            'assets/slide-3.jpg'
+          ]),
+          JSON.stringify([
+            { icon: '🌿', label: 'طبيعية 100%' },
+            { icon: '🌱', label: 'زراعة منزلية' },
+            { icon: '📦', label: 'توصيل مضمون' }
+          ])
+        ]);
+      }
+
+      console.log('✅ Database schema verified and ready.');
+    } catch (err) {
+      console.error('⚠️ Database connection/initialization error:', err.message);
+    } finally {
+      if (client) client.release();
+    }
+  })();
+
+  return dbInitPromise;
 }
 
-initDb();
+// Trigger initial DB setup
+initDb().catch(e => console.warn('Non-blocking DB init:', e.message));
 
 // ==========================================
 // 2. MIDDLEWARE & UPLOADS
@@ -160,23 +169,29 @@ app.use(cors());
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
-// Ensure uploads directory exists
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
+// Upload directory handling (safe for both local & Vercel serverless)
+const isVercel = Boolean(process.env.VERCEL);
+const uploadsDir = isVercel ? path.join('/tmp', 'uploads') : path.join(__dirname, 'uploads');
+
+try {
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  }
+} catch (err) {
+  console.warn('Upload directory fallback to memory:', err.message);
 }
 
-// Multer storage for product photo uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadsDir);
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname) || '.jpg';
-    const uniqueName = `seed-${Date.now()}-${Math.round(Math.random() * 1E6)}${ext}`;
-    cb(null, uniqueName);
-  }
-});
+// Use memory storage on Vercel to return data URIs, or disk storage locally
+const storage = isVercel 
+  ? multer.memoryStorage()
+  : multer.diskStorage({
+      destination: (req, file, cb) => cb(null, uploadsDir),
+      filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname) || '.jpg';
+        const uniqueName = `seed-${Date.now()}-${Math.round(Math.random() * 1E6)}${ext}`;
+        cb(null, uniqueName);
+      }
+    });
 
 const upload = multer({
   storage,
@@ -191,7 +206,9 @@ const upload = multer({
 });
 
 // Serve static files
-app.use('/uploads', express.static(uploadsDir));
+if (fs.existsSync(uploadsDir)) {
+  app.use('/uploads', express.static(uploadsDir));
+}
 app.use(express.static(__dirname));
 
 // ==========================================
@@ -201,6 +218,7 @@ app.use(express.static(__dirname));
 // Health Check & Stats
 app.get('/api/health', async (req, res) => {
   try {
+    await initDb();
     const timeRes = await pool.query('SELECT NOW() as current_time;');
     const prodRes = await pool.query('SELECT COUNT(*) FROM products;');
     const orderRes = await pool.query('SELECT COUNT(*) FROM orders;');
@@ -229,7 +247,15 @@ app.post('/api/upload', upload.array('photos', 10), (req, res) => {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ success: false, error: 'لم يتم اختيار أي صورة' });
     }
-    const fileUrls = req.files.map(f => `uploads/${f.filename}`);
+
+    const fileUrls = req.files.map(f => {
+      if (isVercel && f.buffer) {
+        // Convert to data URI for serverless persistence without S3/disk
+        return `data:${f.mimetype};base64,${f.buffer.toString('base64')}`;
+      }
+      return `uploads/${f.filename}`;
+    });
+
     res.json({ success: true, urls: fileUrls });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -243,6 +269,7 @@ app.post('/api/upload', upload.array('photos', 10), (req, res) => {
 // GET all products
 app.get('/api/products', async (req, res) => {
   try {
+    await initDb();
     const includeAll = req.query.all === 'true';
     const query = includeAll 
       ? 'SELECT * FROM products ORDER BY id DESC;' 
@@ -258,6 +285,7 @@ app.get('/api/products', async (req, res) => {
 // GET single product by id or slug
 app.get('/api/products/:identifier', async (req, res) => {
   try {
+    await initDb();
     const { identifier } = req.params;
     const isNum = /^\d+$/.test(identifier);
     const query = isNum
@@ -277,6 +305,7 @@ app.get('/api/products/:identifier', async (req, res) => {
 // POST create new seed product
 app.post('/api/products', async (req, res) => {
   try {
+    await initDb();
     const {
       name,
       slug,
@@ -348,6 +377,7 @@ app.post('/api/products', async (req, res) => {
 // PUT update product
 app.put('/api/products/:id', async (req, res) => {
   try {
+    await initDb();
     const { id } = req.params;
     const {
       name,
@@ -406,6 +436,7 @@ app.put('/api/products/:id', async (req, res) => {
 // DELETE product
 app.delete('/api/products/:id', async (req, res) => {
   try {
+    await initDb();
     const { id } = req.params;
     await pool.query('DELETE FROM products WHERE id = $1;', [id]);
     res.json({ success: true, message: 'تم حذف المنتج بنجاح' });
@@ -421,6 +452,7 @@ app.delete('/api/products/:id', async (req, res) => {
 // GET all orders
 app.get('/api/orders', async (req, res) => {
   try {
+    await initDb();
     const { status, search } = req.query;
     let query = 'SELECT * FROM orders WHERE 1=1';
     const params = [];
@@ -453,6 +485,7 @@ app.get('/api/orders', async (req, res) => {
 // POST create confirmed order
 app.post('/api/orders', async (req, res) => {
   try {
+    await initDb();
     const {
       id,
       fullName,
@@ -467,8 +500,8 @@ app.post('/api/orders', async (req, res) => {
       note
     } = req.body;
 
-    if (!fullName || !phone || !willaya || !baladia) {
-      return res.status(400).json({ success: false, error: 'يرجى إكمال جميع الحقول المطلوبة' });
+    if (!fullName || !phone) {
+      return res.status(400).json({ success: false, error: 'يرجى إدخال الاسم ورقم الهاتف' });
     }
 
     const orderId = id || `ORD-${Date.now().toString().slice(-4)}${Math.floor(Math.random() * 90 + 10)}`;
@@ -487,8 +520,8 @@ app.post('/api/orders', async (req, res) => {
       productName || 'بذور الكاكي الفاخرة',
       fullName.trim(),
       phone.trim(),
-      willaya.trim(),
-      baladia.trim(),
+      willaya ? willaya.trim() : 'غير محدد',
+      baladia ? baladia.trim() : '',
       qty,
       finalPrice,
       note || ''
@@ -519,6 +552,7 @@ app.post('/api/orders', async (req, res) => {
 // PATCH update single order status
 app.patch('/api/orders/:id/status', async (req, res) => {
   try {
+    await initDb();
     const { id } = req.params;
     const { status } = req.body;
 
@@ -539,6 +573,7 @@ app.patch('/api/orders/:id/status', async (req, res) => {
 // POST bulk update order status
 app.post('/api/orders/bulk-status', async (req, res) => {
   try {
+    await initDb();
     const { ids, status } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ success: false, error: 'لم يتم تحديد طلبات' });
@@ -557,6 +592,7 @@ app.post('/api/orders/bulk-status', async (req, res) => {
 // DELETE single order
 app.delete('/api/orders/:id', async (req, res) => {
   try {
+    await initDb();
     const { id } = req.params;
     await pool.query('DELETE FROM orders WHERE id = $1;', [id]);
     res.json({ success: true, message: 'تم حذف الطلب بنجاح' });
@@ -572,6 +608,7 @@ app.delete('/api/orders/:id', async (req, res) => {
 // GET all leads (Abandoned carts / unconfirmed clients)
 app.get('/api/leads', async (req, res) => {
   try {
+    await initDb();
     const { status, search } = req.query;
     let query = 'SELECT * FROM leads WHERE 1=1';
     const params = [];
@@ -603,6 +640,7 @@ app.get('/api/leads', async (req, res) => {
 // POST auto-capture or update draft lead
 app.post('/api/leads', async (req, res) => {
   try {
+    await initDb();
     const {
       sessionToken,
       fullName,
@@ -670,6 +708,7 @@ app.post('/api/leads', async (req, res) => {
 // PATCH update lead status
 app.patch('/api/leads/:id/status', async (req, res) => {
   try {
+    await initDb();
     const { id } = req.params;
     const { status } = req.body;
 
@@ -691,6 +730,7 @@ app.patch('/api/leads/:id/status', async (req, res) => {
 // POST convert lead to official confirmed order
 app.post('/api/leads/:id/convert', async (req, res) => {
   try {
+    await initDb();
     const { id } = req.params;
     const leadRes = await pool.query('SELECT * FROM leads WHERE id = $1;', [id]);
     if (leadRes.rows.length === 0) {
@@ -709,7 +749,7 @@ app.post('/api/leads/:id/convert', async (req, res) => {
     `, [
       orderId,
       lead.product_id,
-      lead.product_name,
+      lead.product_name || 'بذور الكاكي الفاخرة',
       lead.full_name || 'زبون تم الاتصال به',
       lead.phone,
       lead.willaya || 'غير محدد',
@@ -736,6 +776,7 @@ app.post('/api/leads/:id/convert', async (req, res) => {
 // DELETE single lead
 app.delete('/api/leads/:id', async (req, res) => {
   try {
+    await initDb();
     const { id } = req.params;
     await pool.query('DELETE FROM leads WHERE id = $1;', [id]);
     res.json({ success: true, message: 'تم حذف الزبون بنجاح' });
@@ -749,6 +790,7 @@ app.delete('/api/leads/:id', async (req, res) => {
 // ------------------------------------------
 app.get('/api/settings', async (req, res) => {
   try {
+    await initDb();
     const result = await pool.query('SELECT * FROM settings;');
     const settingsMap = {};
     result.rows.forEach(r => { settingsMap[r.key] = r.value; });
@@ -760,6 +802,7 @@ app.get('/api/settings', async (req, res) => {
 
 app.post('/api/settings', async (req, res) => {
   try {
+    await initDb();
     const entries = Object.entries(req.body);
     for (const [key, value] of entries) {
       await pool.query(`
@@ -774,9 +817,19 @@ app.post('/api/settings', async (req, res) => {
   }
 });
 
-// Start Server
-app.listen(PORT, () => {
-  console.log(`🚀 E-Commerce Backend Server running on port ${PORT}`);
-  console.log(`🌐 Landing Page: http://localhost:${PORT}/index.html`);
-  console.log(`📊 Admin Page:   http://localhost:${PORT}/admin.html`);
+// Route fallbacks for direct navigation
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin.html'));
 });
+
+// Start Server if executed directly (Local Node.js)
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`🚀 E-Commerce Backend Server running on port ${PORT}`);
+    console.log(`🌐 Landing Page: http://localhost:${PORT}/index.html`);
+    console.log(`📊 Admin Page:   http://localhost:${PORT}/admin.html`);
+  });
+}
+
+// Export Express app for Vercel Serverless Function
+module.exports = app;
