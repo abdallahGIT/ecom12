@@ -463,8 +463,8 @@ function initOrderForm() {
       num_items: selectedQty
     });
 
-    // 4. Dispatch to EcoTrack API
-    await APP_CONFIG.ecotrack.sendOrder(newOrder);
+    // EcoTrack dispatch is intentionally server-side and is triggered from the admin dashboard.
+    // This keeps the courier token out of the browser and lets staff verify each order first.
 
     // 5. Update submit button to confirmed state
     submitBtn.classList.add("confirmed");

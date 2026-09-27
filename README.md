@@ -18,6 +18,19 @@ npm start
 
 The API requires `DATABASE_URL`. The application no longer contains a database credential fallback; without the variable, the storefront remains deployable but database-backed API requests return a clear configuration error.
 
+## EcoTrack Algeria courier integration
+
+EcoTrack is intentionally called **only from the server**. Configure either Vercel environment variables or the admin integration form:
+
+```text
+ECOTRACK_PROVIDER=navexdelivery
+ECOTRACK_API_TOKEN=your-private-token
+```
+
+The admin dashboard supports commune lookup, delivery fees, single and bulk shipment creation, cancellation, tracking display, and status synchronization. The customer browser never receives the courier token. Confirm an order first, then use **رفع للشحن** or the bulk action.
+
+The supplied Postman collection at `postman.com/ecotrakapi/ecotrak-public-apis` documents a different US `api.ecotrak.com` maintenance/invoice platform (OAuth client credentials, invoices, work orders). It is not the Algerian courier API used by the legacy projects. This project therefore preserves the verified courier endpoints used by those projects: `https://<provider>.ecotrack.dz/api/v1`.
+
 ## Vercel deployment
 
 1. Import `abdallahGIT/ecom12` into Vercel.
@@ -31,4 +44,4 @@ The API requires `DATABASE_URL`. The application no longer contains a database c
 ## Project identity
 
 - GitHub: [abdallahGIT/ecom12](https://github.com/abdallahGIT/ecom12)
-- Email: `114431339+114431339+abdallahGIT@users.noreply.github.com`
+- Email: `114431339+abdallahGIT@users.noreply.github.com`

@@ -70,43 +70,11 @@ const APP_CONFIG = {
   // EcoTrack Algeria Logistics API Slot
   ecotrack: {
     enabled: false,
-    apiUrl: "https://api.ecotrack.dz/v1/orders",
-    apiToken: "YOUR_ECOTRACK_TOKEN_HERE", // توكن الربط مع إيكوتراك
-    storeId: "YOUR_STORE_ID",
+    apiUrl: null,
+    apiToken: null,
+    storeId: null,
     async sendOrder(order) {
-      if (!this.enabled || !this.apiToken || this.apiToken === "YOUR_ECOTRACK_TOKEN_HERE") {
-        console.log("📦 [EcoTrack API] Order saved locally. EcoTrack integration is in standby mode.");
-        return { success: true, mode: "local", orderId: order.id };
-      }
-
-      try {
-        const payload = {
-          tracking_id: order.id,
-          recipient_name: order.fullName,
-          phone: order.phone,
-          wilaya_id: order.willayaId,
-          commune: order.baladia,
-          product_name: "بذور الكاكي الفاخرة",
-          quantity: order.quantity,
-          amount: order.price,
-          note: "توصيل بذور الكاكي - الدفع عند الاستلام"
-        };
-
-        const response = await fetch(this.apiUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${this.apiToken}`
-          },
-          body: JSON.stringify(payload)
-        });
-
-        const data = await response.json();
-        return { success: response.ok, data };
-      } catch (err) {
-        console.warn("⚠️ EcoTrack API sync failed:", err);
-        return { success: false, error: err.message };
-      }
+      return { success: true, mode: "server-side", orderId: order.id };
     }
   }
 };

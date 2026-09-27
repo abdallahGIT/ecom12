@@ -183,6 +183,8 @@
             <button class="bulk-btn green" onclick="bulkAction('confirmed')">✓ تأكيد</button>
             <button class="bulk-btn blue" onclick="bulkAction('delivered')">📦 توصيل</button>
             <button class="bulk-btn red" onclick="bulkAction('cancelled')">✕ إلغاء</button>
+            <button class="bulk-btn blue" onclick="bulkEcoTrackAction('push')">🚚 رفع المحدد</button>
+            <button class="bulk-btn red" onclick="bulkEcoTrackAction('cancel')">↩ إلغاء الشحن</button>
           </div>
         </div>
       </div>
@@ -222,6 +224,7 @@
             </select>
 
             <button id="exportCsvBtn" class="btn-action">📥 Excel</button>
+            <button class="btn-action" onclick="syncEcoTrackStatuses()">🔄 مزامنة EcoTrack</button>
             <button class="btn-action" onclick="selectAllVisible()">☑ تحديد الكل</button>
           </div>
         </div>
@@ -484,18 +487,18 @@
         <div class="api-slot-box">
           <div class="api-slot-title">📦 EcoTrack Logistics API</div>
           <div style="margin-bottom:10px;">
-            <label>API Endpoint:</label>
-            <input type="text" id="ecotrackUrlInput" class="search-input" value="https://api.ecotrack.dz/v1/orders" dir="ltr">
+            <label>معرّف شركة EcoTrack (Provider):</label>
+            <input type="text" id="ecotrackProviderInput" class="search-input" value="navexdelivery" dir="ltr">
           </div>
           <div style="margin-bottom:10px;">
             <label>API Token (سري):</label>
             <input type="password" id="ecotrackKeyInput" class="search-input" placeholder="توكن إيكوتراك" dir="ltr">
           </div>
           <div>
-            <label>Store ID:</label>
+            <label>Store ID (اختياري):</label>
             <input type="text" id="ecotrackStoreInput" class="search-input" placeholder="معرف المتجر" dir="ltr">
           </div>
-          <p class="api-hint">كل طلب مؤكد يُرسل تلقائياً لتوليد بوليصة الشحن.</p>
+          <p class="api-hint">يُحفظ التوكن في Neon فقط. بعد تأكيد الطلب اضغط «رفع للشحن» لإرسال الشحنة وتوليد رقم التتبع.</p>
         </div>
       </div>
       <div class="admin-modal-footer">

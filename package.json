@@ -9,7 +9,7 @@
     "check": "node --check server.js && node --check api/index.js && node --check app.js && node --check admin.js && node --check data.js"
   },
   "keywords": [],
-  "author": "abdallahGIT <114431339+114431339+abdallahGIT@users.noreply.github.com>",
+  "author": "abdallahGIT <114431339+abdallahGIT@users.noreply.github.com>",
   "license": "MIT",
   "type": "commonjs",
   "engines": {

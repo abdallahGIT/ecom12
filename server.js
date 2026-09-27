@@ -4,6 +4,16 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const { Pool } = require('pg');
+const {
+  getSettings: getEcoTrackSettings,
+  createParcel: createEcoTrackParcel,
+  listOrders: listEcoTrackOrders,
+  cancelParcel: cancelEcoTrackParcel,
+  getFees: getEcoTrackFees,
+  getProducts: getEcoTrackProducts,
+  getCommunes: getEcoTrackCommunes,
+  normalizeStatus: normalizeEcoTrackStatus
+} = require('./ecotrack');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -104,6 +114,10 @@ async function initDb() {
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS note TEXT;
         ALTER TABLE orders ALTER COLUMN willaya DROP NOT NULL;
         ALTER TABLE orders ALTER COLUMN baladia DROP NOT NULL;
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_type VARCHAR(24) DEFAULT 'home';
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS ecotrack_tracking VARCHAR(120);
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS ecotrack_status VARCHAR(120);
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS ecotrack_updated_at TIMESTAMP WITH TIME ZONE;
         ALTER TABLE leads ADD COLUMN IF NOT EXISTS willaya_id INT;
         ALTER TABLE leads ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
       `);
@@ -500,7 +514,8 @@ app.post('/api/orders', async (req, res) => {
       productId,
       productName,
       sessionToken,
-      note
+      note,
+      deliveryType
     } = req.body;
 
     if (!fullName || !phone) {
@@ -514,8 +529,8 @@ app.post('/api/orders', async (req, res) => {
     const result = await pool.query(`
       INSERT INTO orders (
         id, product_id, product_name, full_name, phone,
-        willaya, baladia, quantity, price, status, note
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'new', $10)
+        willaya, baladia, quantity, price, status, note, delivery_type
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'new', $10, $11)
       RETURNING *;
     `, [
       orderId,
@@ -527,7 +542,8 @@ app.post('/api/orders', async (req, res) => {
       baladia ? baladia.trim() : '',
       qty,
       finalPrice,
-      note || ''
+      note || '',
+      deliveryType === 'stop_desk' ? 'stop_desk' : 'home'
     ]);
 
     // If sessionToken was attached, mark corresponding lead as converted
@@ -589,6 +605,150 @@ app.post('/api/orders/bulk-status', async (req, res) => {
     res.json({ success: true, updatedCount: ids.length });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ------------------------------------------
+// EcoTrack Algeria courier API
+// ------------------------------------------
+app.get('/api/ecotrack/communes/:wilayaId', async (req, res) => {
+  try {
+    await initDb();
+    const settings = await getEcoTrackSettings(pool);
+    const communes = await getEcoTrackCommunes(req.params.wilayaId, settings);
+    res.json({ success: true, communes });
+  } catch (err) {
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/ecotrack/fees', async (req, res) => {
+  try {
+    await initDb();
+    const settings = await getEcoTrackSettings(pool);
+    const fees = await getEcoTrackFees(settings);
+    res.json({ success: true, fees, provider: settings.provider });
+  } catch (err) {
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/ecotrack/products', async (req, res) => {
+  try {
+    await initDb();
+    const settings = await getEcoTrackSettings(pool);
+    const products = await getEcoTrackProducts(settings);
+    res.json({ success: true, products, provider: settings.provider });
+  } catch (err) {
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/orders/:id/ecotrack/push', async (req, res) => {
+  try {
+    await initDb();
+    const result = await pool.query('SELECT * FROM orders WHERE id = $1 LIMIT 1', [req.params.id]);
+    if (!result.rows[0]) return res.status(404).json({ success: false, error: 'الطلب غير موجود' });
+    const order = result.rows[0];
+    if (order.ecotrack_tracking) return res.status(409).json({ success: false, error: `الطلب مرفوع مسبقاً برقم التتبع ${order.ecotrack_tracking}` });
+    if (order.status !== 'confirmed') return res.status(409).json({ success: false, error: 'يجب تأكيد الطلب قبل رفعه إلى EcoTrack' });
+    const settings = await getEcoTrackSettings(pool);
+    const pushed = await createEcoTrackParcel({ ...order, delivery_type: req.body?.deliveryType || order.delivery_type }, settings);
+    const updated = await pool.query('UPDATE orders SET ecotrack_tracking = $1, ecotrack_status = $2, ecotrack_updated_at = CURRENT_TIMESTAMP, status = \'confirmed\' WHERE id = $3 RETURNING *', [pushed.tracking, 'created', req.params.id]);
+    res.json({ success: true, tracking: pushed.tracking, order: updated.rows[0] });
+  } catch (err) {
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/orders/ecotrack/bulk-push', async (req, res) => {
+  try {
+    await initDb();
+    const ids = Array.isArray(req.body?.ids) && req.body.ids.length ? req.body.ids : null;
+    const query = ids ? "SELECT * FROM orders WHERE id = ANY($1::text[]) AND status = 'confirmed' AND ecotrack_tracking IS NULL" : "SELECT * FROM orders WHERE status = 'confirmed' AND ecotrack_tracking IS NULL";
+    const orders = (await pool.query(query, ids ? [ids] : [])).rows;
+    const results = { total: orders.length, pushed: [], failed: [] };
+    const settings = await getEcoTrackSettings(pool);
+    for (const order of orders) {
+      try {
+        const pushed = await createEcoTrackParcel(order, settings);
+        await pool.query('UPDATE orders SET ecotrack_tracking = $1, ecotrack_status = $2, ecotrack_updated_at = CURRENT_TIMESTAMP, status = \'confirmed\' WHERE id = $3', [pushed.tracking, 'created', order.id]);
+        results.pushed.push({ id: order.id, tracking: pushed.tracking });
+      } catch (err) {
+        results.failed.push({ id: order.id, error: err.message });
+      }
+    }
+    res.json({ success: true, ...results });
+  } catch (err) {
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/orders/:id/ecotrack/cancel', async (req, res) => {
+  try {
+    await initDb();
+    const result = await pool.query('SELECT * FROM orders WHERE id = $1 LIMIT 1', [req.params.id]);
+    const order = result.rows[0];
+    if (!order) return res.status(404).json({ success: false, error: 'الطلب غير موجود' });
+    if (!order.ecotrack_tracking) return res.status(409).json({ success: false, error: 'لا يوجد رقم تتبع لهذا الطلب' });
+    const settings = await getEcoTrackSettings(pool);
+    await cancelEcoTrackParcel(order.ecotrack_tracking, settings);
+    const updated = await pool.query('UPDATE orders SET ecotrack_tracking = NULL, ecotrack_status = \'cancelled\', ecotrack_updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *', [req.params.id]);
+    res.json({ success: true, order: updated.rows[0] });
+  } catch (err) {
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/orders/ecotrack/bulk-cancel', async (req, res) => {
+  try {
+    await initDb();
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    if (!ids.length) return res.status(400).json({ success: false, error: 'حدد طلبات مشحونة أولاً' });
+    const orders = (await pool.query('SELECT * FROM orders WHERE id = ANY($1::text[]) AND ecotrack_tracking IS NOT NULL', [ids])).rows;
+    const settings = await getEcoTrackSettings(pool);
+    const results = { total: orders.length, cancelled: [], failed: [] };
+    for (const order of orders) {
+      try {
+        await cancelEcoTrackParcel(order.ecotrack_tracking, settings);
+        await pool.query('UPDATE orders SET ecotrack_tracking = NULL, ecotrack_status = \'cancelled\', ecotrack_updated_at = CURRENT_TIMESTAMP WHERE id = $1', [order.id]);
+        results.cancelled.push(order.id);
+      } catch (err) { results.failed.push({ id: order.id, error: err.message }); }
+    }
+    res.json({ success: true, ...results });
+  } catch (err) {
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/orders/ecotrack/sync', async (req, res) => {
+  try {
+    await initDb();
+    const settings = await getEcoTrackSettings(pool);
+    const first = await listEcoTrackOrders(settings, 1, 100);
+    const parcels = Array.isArray(first?.data) ? [...first.data] : (Array.isArray(first?.orders) ? [...first.orders] : []);
+    const lastPage = Math.max(1, Number(first?.last_page || first?.meta?.last_page || 1));
+    for (let page = 2; page <= lastPage; page += 1) {
+      const next = await listEcoTrackOrders(settings, page, 100);
+      if (Array.isArray(next?.data)) parcels.push(...next.data);
+    }
+    let synced = 0;
+    for (const parcel of parcels) {
+      const tracking = String(parcel.tracking || parcel.tracking_number || '');
+      const reference = String(parcel.reference || '');
+      if (!tracking && !reference) continue;
+      const match = tracking
+        ? await pool.query('SELECT id FROM orders WHERE ecotrack_tracking = $1 OR id = $2 LIMIT 1', [tracking, reference])
+        : await pool.query('SELECT id FROM orders WHERE id = $1 LIMIT 1', [reference]);
+      if (!match.rows[0]) continue;
+      const normalized = normalizeEcoTrackStatus(parcel.status);
+      const nextStatus = normalized === 'delivered' ? 'delivered' : ['returning', 'cancelled'].includes(normalized) ? 'cancelled' : null;
+      await pool.query('UPDATE orders SET ecotrack_tracking = COALESCE(NULLIF($1, \'\'), ecotrack_tracking), ecotrack_status = $2, ecotrack_updated_at = CURRENT_TIMESTAMP, status = COALESCE($3, status) WHERE id = $4', [tracking, String(parcel.status || ''), nextStatus, match.rows[0].id]);
+      synced += 1;
+    }
+    res.json({ success: true, fetched: parcels.length, synced });
+  } catch (err) {
+    res.status(502).json({ success: false, error: err.message });
   }
 });
 
@@ -796,7 +956,9 @@ app.get('/api/settings', async (req, res) => {
     await initDb();
     const result = await pool.query('SELECT * FROM settings;');
     const settingsMap = {};
-    result.rows.forEach(r => { settingsMap[r.key] = r.value; });
+    result.rows.forEach(r => {
+      settingsMap[r.key] = ['ecotrack_token', 'ecotrack_key'].includes(r.key) ? (r.value ? '••••••••' : '') : r.value;
+    });
     res.json({ success: true, settings: settingsMap });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -808,6 +970,7 @@ app.post('/api/settings', async (req, res) => {
     await initDb();
     const entries = Object.entries(req.body);
     for (const [key, value] of entries) {
+      if (['ecotrack_token', 'ecotrack_key'].includes(key) && (!value || String(value).includes('••••'))) continue;
       await pool.query(`
         INSERT INTO settings (key, value, updated_at)
         VALUES ($1, $2, CURRENT_TIMESTAMP)
