@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>لوحة التحكم | بذور الكاكي</title>
+  <title>لوحة التحكم | بذور الكاكي والمنتجات</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="admin.css">
@@ -15,10 +15,18 @@
     <div class="nav-brand">
       <div class="brand-icon">🌱</div>
       <div class="brand-text">
-        <h1>بذور الكاكي — لوحة التحكم</h1>
-        <span>إدارة الطلبات · المخزون · الشحن</span>
+        <h1>لوحة تحكم المتجر الإلكتروني</h1>
+        <span>إدارة البذور · الطلبات · السلات المهجورة · المخزون</span>
       </div>
     </div>
+    
+    <div class="nav-center">
+      <div class="db-status-badge" id="dbStatusBadge" title="حالة الاتصال بقاعدة بيانات Neon">
+        <span class="pulse-dot"></span>
+        <span id="dbStatusText">جاري الاتصال بـ Neon DB...</span>
+      </div>
+    </div>
+
     <div class="nav-actions">
       <a href="index.html" class="nav-btn" target="_blank">📲 المتجر</a>
       <button class="nav-btn success" id="openProductModalBtn">🌱 + منتج بذور جديد</button>
@@ -52,6 +60,13 @@
         </div>
         <div class="metric-badge">✅</div>
       </div>
+      <div class="metric-card alert-card">
+        <div class="metric-info">
+          <h3>زبائن لم يؤكدوا (سلات مهجورة) ⚠️</h3>
+          <div class="metric-value" id="metricLeads" style="color:#EF4444;">0</div>
+        </div>
+        <div class="metric-badge red-badge">🛒</div>
+      </div>
       <div class="metric-card">
         <div class="metric-info">
           <h3>المداخيل (مؤكد + موصّل)</h3>
@@ -61,21 +76,42 @@
       </div>
     </section>
 
+    <!-- ── SEED PRODUCTS CATALOG (NEON DB) ── -->
+    <section class="products-panel">
+      <div class="panel-header-bar">
+        <div class="panel-title-wrap">
+          <span class="panel-icon">🌱</span>
+          <div>
+            <h2>كتالوج منتجات البذور (متصل بـ Neon DB)</h2>
+            <span class="panel-sub">إضافة بذور جديدة بالصور والأسعار والمخزون · تفعيل وتعطيل فوري</span>
+          </div>
+        </div>
+        <div class="panel-actions-wrap">
+          <button class="btn-action green-btn" id="openProductModalBtn2">➕ إضافة منتج بذور جديد</button>
+        </div>
+      </div>
+
+      <!-- Products Grid populated dynamically from Neon DB -->
+      <div class="products-grid" id="productsGrid">
+        <div class="loading-placeholder">جاري جلب منتجات البذور من قاعدة بيانات Neon...</div>
+      </div>
+    </section>
+
     <!-- ── STOCK & QUICK ACTIONS ROW ── -->
     <section class="ops-row">
 
       <!-- Stock Management -->
       <div class="ops-card stock-card">
         <div class="ops-card-header">
-          <span class="ops-card-title">📦 إدارة المخزون</span>
+          <span class="ops-card-title">📦 إدارة المخزون للمنتج النشط</span>
         </div>
         <div class="stock-body">
           <div class="stock-item">
-            <span class="stock-label">المخزون الحالي (علب)</span>
+            <span class="stock-label">المخزون الإجمالي (علب)</span>
             <div class="stock-control">
-              <button class="stock-btn minus" id="stockMinus">−</button>
+              <button class="stock-btn minus" id="stockMinus" title="إنقاص 5">−</button>
               <span class="stock-count" id="stockCount">50</span>
-              <button class="stock-btn plus" id="stockPlus">+</button>
+              <button class="stock-btn plus" id="stockPlus" title="زيادة 5">+</button>
             </div>
           </div>
           <div class="stock-item">
@@ -83,7 +119,7 @@
             <span class="stock-val pending" id="stockPending">0 علبة</span>
           </div>
           <div class="stock-item">
-            <span class="stock-label">الرصيد المتاح</span>
+            <span class="stock-label">الرصيد المتاح للبيع</span>
             <span class="stock-val available" id="stockAvailable">50 علبة</span>
           </div>
           <div class="stock-item">
@@ -96,13 +132,21 @@
       <!-- Quick Pipeline / Workflow -->
       <div class="ops-card pipeline-card">
         <div class="ops-card-header">
-          <span class="ops-card-title">🔄 خط سير الطلبات</span>
+          <span class="ops-card-title">🔄 خط سير الطلبات ومتابعة السلات المهجورة</span>
         </div>
         <div class="pipeline-steps">
           <div class="pipe-step">
+            <div class="pipe-dot lead-dot"></div>
+            <div class="pipe-info">
+              <span class="pipe-label">سلات مهجورة</span>
+              <span class="pipe-count" id="pipeLeads">0</span>
+            </div>
+          </div>
+          <div class="pipe-arrow">←</div>
+          <div class="pipe-step">
             <div class="pipe-dot new-dot"></div>
             <div class="pipe-info">
-              <span class="pipe-label">جديد</span>
+              <span class="pipe-label">طلب جديد</span>
               <span class="pipe-count" id="pipeNew">0</span>
             </div>
           </div>
@@ -145,88 +189,233 @@
 
     </section>
 
-    <!-- ── SEED PRODUCTS CATALOG (NEON DB) ── -->
-    <section class="products-panel">
-      <div class="panel-header-bar">
-        <div class="panel-title-wrap">
-          <span class="panel-icon">🌱</span>
-          <div>
-            <h2>كتالوج منتجات البذور</h2>
-            <span class="panel-sub">متعدد المنتجات · متصل بقاعدة بيانات Neon PostgreSQL ⚡</span>
+    <!-- ── TABS SECTION: ORDERS vs CAPTURED LEADS ── -->
+    <section class="table-panel">
+      
+      <!-- Section Tabs Navigation -->
+      <div class="panel-tabs-bar">
+        <button class="panel-tab-btn active" id="tabOrdersBtn" onclick="switchTableTab('orders')">
+          <span>📦 الطلبات المؤكدة والجديدة</span>
+          <span class="tab-badge" id="ordersTabCount">0</span>
+        </button>
+        <button class="panel-tab-btn" id="tabLeadsBtn" onclick="switchTableTab('leads')">
+          <span>🛒 زبائن لم يؤكدوا (سلات مهجورة)</span>
+          <span class="tab-badge red" id="leadsTabCount">0</span>
+        </button>
+      </div>
+
+      <!-- 1. ORDERS VIEW -->
+      <div id="ordersViewContainer">
+        <div class="table-toolbar">
+          <div class="search-box">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="tableSearch" class="search-input" placeholder="بحث بالاسم، هاتف، ولاية، رقم الطلب...">
+          </div>
+
+          <div class="filter-group">
+            <select id="statusFilter" class="filter-select">
+              <option value="all">كل الحالات</option>
+              <option value="new">جديد ⏳</option>
+              <option value="confirmed">مؤكد ✓</option>
+              <option value="delivered">موصّل 📦</option>
+              <option value="cancelled">ملغى ✕</option>
+            </select>
+
+            <button id="exportCsvBtn" class="btn-action">📥 Excel</button>
+            <button class="btn-action" onclick="selectAllVisible()">☑ تحديد الكل</button>
           </div>
         </div>
-        <div class="panel-actions-wrap">
-          <button class="btn-action green" id="openProductModalBtn2">➕ إضافة منتج بذور جديد</button>
+
+        <div class="table-responsive">
+          <table class="excel-table" id="ordersTable">
+            <thead>
+              <tr>
+                <th style="width:36px;"><input type="checkbox" id="masterCheck" onchange="toggleAllCheckboxes(this)"></th>
+                <th>رقم الطلب</th>
+                <th>المنتج</th>
+                <th>الاسم</th>
+                <th>الهاتف</th>
+                <th>الولاية · البلدية</th>
+                <th>الكمية</th>
+                <th>المبلغ</th>
+                <th>الحالة</th>
+                <th>التاريخ</th>
+                <th style="min-width:200px;">الإجراءات السريعة</th>
+              </tr>
+            </thead>
+            <tbody id="ordersTableBody">
+              <!-- Rows rendered by admin.js -->
+            </tbody>
+          </table>
+        </div>
+
+        <div class="table-footer-bar">
+          <span>عرض <span id="tableCountLabel">0</span> طلب</span>
+          <span style="color:#94A3B8; font-size:0.78rem;">متزامن مباشرة مع Neon PostgreSQL ⚡</span>
         </div>
       </div>
 
-      <!-- Products Grid populated dynamically from Neon DB -->
-      <div class="products-grid" id="productsGrid">
-        <div class="loading-placeholder">جاري جلب منتجات البذور من قاعدة بيانات Neon...</div>
-      </div>
-    </section>
+      <!-- 2. CAPTURED LEADS VIEW (ABANDONED WITHOUT CONFIRMING) -->
+      <div id="leadsViewContainer" style="display: none;">
+        <div class="table-toolbar alert-toolbar">
+          <div class="search-box">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="leadsSearch" class="search-input" placeholder="بحث في الزبائن الذين لم يؤكدوا...">
+          </div>
 
-    <!-- ── ORDERS TABLE ── -->
-    <section class="table-panel">
-      <div class="table-toolbar">
-        <div class="search-box">
-          <span class="search-icon">🔍</span>
-          <input type="text" id="tableSearch" class="search-input" placeholder="بحث بالاسم، هاتف، ولاية، رقم الطلب...">
+          <div class="filter-group">
+            <span class="leads-info-note">💡 هؤلاء زبائن كتبوا أرقامهم واسمهم ولم يضغطوا تأكيد — اتصل بهم الآن أو راسلهم واتساب لإغلاق الطلب!</span>
+            <button id="refreshLeadsBtn" class="btn-action" onclick="loadLeads()">🔄 تحديث</button>
+          </div>
         </div>
 
-        <div class="filter-group">
-          <select id="statusFilter" class="filter-select">
-            <option value="all">كل الحالات</option>
-            <option value="new">جديد ⏳</option>
-            <option value="confirmed">مؤكد ✓</option>
-            <option value="delivered">موصّل 📦</option>
-            <option value="cancelled">ملغى ✕</option>
-          </select>
+        <div class="table-responsive">
+          <table class="excel-table leads-table" id="leadsTable">
+            <thead>
+              <tr>
+                <th>معرف الزبون</th>
+                <th>الاسم المدخل</th>
+                <th>رقم الهاتف</th>
+                <th>الولاية · البلدية</th>
+                <th>الكمية المستهدفة</th>
+                <th>المبلغ المتوقع</th>
+                <th>آخر نشاط</th>
+                <th>حالة المتابعة</th>
+                <th style="min-width:260px;">إجراءات الإغلاق الفوري 📞</th>
+              </tr>
+            </thead>
+            <tbody id="leadsTableBody">
+              <!-- Captured leads rendered by admin.js -->
+            </tbody>
+          </table>
+        </div>
 
-          <button id="exportCsvBtn" class="btn-action">📥 Excel</button>
-          <button class="btn-action" onclick="selectAllVisible()">☑ تحديد الكل</button>
+        <div class="table-footer-bar">
+          <span>عرض <span id="leadsCountLabel">0</span> زبون محتمل</span>
+          <span style="color:#10B981; font-weight:700;">💰 نسبة الاسترجاع بالاتصال الهاتفي تصل إلى 60%!</span>
         </div>
       </div>
 
-      <div class="table-responsive">
-        <table class="excel-table" id="ordersTable">
-          <thead>
-            <tr>
-              <th style="width:36px;"><input type="checkbox" id="masterCheck" onchange="toggleAllCheckboxes(this)"></th>
-              <th>رقم الطلب</th>
-              <th>الاسم</th>
-              <th>الهاتف</th>
-              <th>الولاية · البلدية</th>
-              <th>الكمية</th>
-              <th>المبلغ</th>
-              <th>الحالة</th>
-              <th>التاريخ</th>
-              <th style="min-width:200px;">الإجراءات السريعة</th>
-            </tr>
-          </thead>
-          <tbody id="ordersTableBody">
-            <!-- Rows rendered by admin.js -->
-          </tbody>
-        </table>
-      </div>
-
-      <div class="table-footer-bar">
-        <span>عرض <span id="tableCountLabel">0</span> طلب</span>
-        <span style="color:#94A3B8; font-size:0.78rem;">متوافق مع EcoTrack · شركات الشحن الجزائرية</span>
-      </div>
     </section>
 
   </main>
+
+  <!-- ══ ADD / EDIT SEED PRODUCT MODAL ══ -->
+  <div class="admin-modal-overlay" id="productModal">
+    <div class="admin-modal-card wide-modal">
+      <div class="admin-modal-header">
+        <h3 class="admin-modal-title" id="productModalTitle">🌱 إضافة منتج بذور جديد</h3>
+        <button class="admin-modal-close" id="closeProductModal">✕</button>
+      </div>
+      <form id="seedProductForm">
+        <input type="hidden" id="editProductId" value="">
+        
+        <div class="admin-modal-body">
+          
+          <!-- Product Name & Slug -->
+          <div class="modal-form-row">
+            <div class="modal-form-group">
+              <label>اسم البذور / المنتج *</label>
+              <input type="text" id="prodName" class="search-input" placeholder="مثال: بذور الكاكي الياباني الفاخرة" required>
+            </div>
+            <div class="modal-form-group">
+              <label>المعرف بالرابط (Slug اختياري)</label>
+              <input type="text" id="prodSlug" class="search-input" placeholder="مثال: kaki-seeds" dir="ltr">
+            </div>
+          </div>
+
+          <!-- Subtitle / Tagline -->
+          <div class="modal-form-group" style="margin-bottom:12px;">
+            <label>العنوان الفرعي / المميزات المختصرة</label>
+            <input type="text" id="prodSubtitle" class="search-input" placeholder="مثال: طبيعية 100% · إنتاجية عالية · زراعة منزلية سهلة">
+          </div>
+
+          <!-- Pricing Grid (Offer 1, 2, 3) -->
+          <div class="modal-section-title">💰 أسعار العروض (دينار جزائري د.ج)</div>
+          <div class="modal-form-row three-cols">
+            <div class="modal-form-group">
+              <label>سعر 1 علبة *</label>
+              <input type="number" id="prodPrice1" class="search-input" value="2500" required>
+            </div>
+            <div class="modal-form-group">
+              <label>سعر 2 علب (الأكثر طلباً) *</label>
+              <input type="number" id="prodPrice2" class="search-input" value="4200" required>
+            </div>
+            <div class="modal-form-group">
+              <label>سعر 3 علب *</label>
+              <input type="number" id="prodPrice3" class="search-input" value="5600" required>
+            </div>
+          </div>
+
+          <!-- Stock & Active Switch -->
+          <div class="modal-form-row">
+            <div class="modal-form-group">
+              <label>الكمية المتوفرة في المخزون (علبة) *</label>
+              <input type="number" id="prodStock" class="search-input" value="50" min="0" required>
+            </div>
+            <div class="modal-form-group" style="justify-content: flex-end;">
+              <label class="switch-container">
+                <input type="checkbox" id="prodIsActive" checked>
+                <span class="switch-slider"></span>
+                <span class="switch-label">عرض المنتج وتفعيله في المتجر</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Product Images Section -->
+          <div class="modal-section-title">📸 صور المنتج للبذور (رفع ملفات أو روابط)</div>
+          
+          <div class="image-upload-zone" id="imageUploadZone">
+            <input type="file" id="prodPhotoFiles" multiple accept="image/*" style="display:none;">
+            <div class="dropzone-content" onclick="document.getElementById('prodPhotoFiles').click()">
+              <span class="dropzone-icon">📁</span>
+              <span class="dropzone-text">اضغط هنا لاختيار صور من جهازك أو اسحبها إلى هنا</span>
+              <span class="dropzone-sub">يمكنك رفع حتى 6 صور (JPG, PNG, WebP)</span>
+            </div>
+          </div>
+
+          <!-- Manual Image URL Add -->
+          <div class="image-url-row">
+            <input type="text" id="manualImageUrlInput" class="search-input" placeholder="أو أضف رابط صورة مباشر (مثال: assets/slide-1.jpg)" dir="ltr">
+            <button type="button" class="btn-action" id="addManualImgBtn">+ إضافة الرابط</button>
+          </div>
+
+          <!-- Images Preview Gallery -->
+          <div class="images-preview-grid" id="imagesPreviewGrid">
+            <!-- Preview thumbnails with delete button -->
+          </div>
+
+          <!-- Description -->
+          <div class="modal-form-group" style="margin-top:12px;">
+            <label>وصف المنتج وتفاصيل البذور وطريقة الزراعة</label>
+            <textarea id="prodDescription" class="search-input" rows="3" placeholder="اكتب تفاصيل المنتج وطريقة الغرس والشحن..."></textarea>
+          </div>
+
+        </div>
+
+        <div class="admin-modal-footer">
+          <button type="button" class="btn-action" id="cancelProductModal">إلغاء</button>
+          <button type="submit" class="btn-action green-btn" id="saveProductBtn">💾 حفظ منتج البذور في قاعدة البيانات</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <!-- ══ ADD MANUAL ORDER MODAL ══ -->
   <div class="admin-modal-overlay" id="addOrderModal">
     <div class="admin-modal-card">
       <div class="admin-modal-header">
-        <h3 class="admin-modal-title">+ إضافة طلب يدوي</h3>
+        <h3 class="admin-modal-title">+ إضافة طلب يدوي جديد</h3>
         <button class="admin-modal-close" id="closeAddModal">✕</button>
       </div>
       <form id="manualOrderForm">
         <div class="admin-modal-body">
+          <div class="modal-form-group" style="margin-bottom:10px;">
+            <label>المنتج المطلوب</label>
+            <select id="newOrderProductSelect" class="filter-select" style="width:100%;">
+              <!-- Populated from products -->
+            </select>
+          </div>
           <div class="modal-form-row">
             <div class="modal-form-group">
               <label>الاسم الكامل *</label>
@@ -272,7 +461,7 @@
         </div>
         <div class="admin-modal-footer">
           <button type="button" class="btn-action" id="cancelAddModal">إلغاء</button>
-          <button type="submit" class="btn-action dark">حفظ الطلب ✓</button>
+          <button type="submit" class="btn-action dark">حفظ الطلب في قاعدة البيانات ✓</button>
         </div>
       </form>
     </div>
@@ -282,7 +471,7 @@
   <div class="admin-modal-overlay" id="apiSettingsModal">
     <div class="admin-modal-card">
       <div class="admin-modal-header">
-        <h3 class="admin-modal-title">🔗 إعدادات الربط (APIs)</h3>
+        <h3 class="admin-modal-title">🔗 إعدادات الربط بقاعدة البيانات والـ APIs</h3>
         <button class="admin-modal-close" id="closeApiModal">✕</button>
       </div>
       <div class="admin-modal-body">
@@ -310,7 +499,7 @@
         </div>
       </div>
       <div class="admin-modal-footer">
-        <button type="button" class="btn-action dark" id="saveApiSettingsBtn">حفظ الإعدادات</button>
+        <button type="button" class="btn-action dark" id="saveApiSettingsBtn">حفظ الإعدادات في Neon DB</button>
       </div>
     </div>
   </div>

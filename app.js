@@ -1,45 +1,162 @@
 // ======================================================
-// KAKI SEEDS — APP INTERACTION & LOGIC
-// Image Slider, Dynamic Offers, Wilaya Sync, Tracking
+// KAKI SEEDS & STOREFRONT LOGIC
+// Dynamic Products, Image Slider, Wilaya Selector,
+// Automatic Lead Capture (Drafts) & Order Submission
 // ======================================================
 
-document.addEventListener("DOMContentLoaded", () => {
+let currentProduct = null;
+let selectedQty = 2; // Default to 2 packs
+let sessionToken = null;
+let leadCaptureTimer = null;
+
+document.addEventListener("DOMContentLoaded", async () => {
+  initSessionToken();
+  initSmoothScroll();
+  initWilayaSelector();
+  
+  // Load Product Data dynamically from Neon DB
+  await loadActiveProduct();
+
+  // Initialize UI features
+  initSlider();
+  initOfferSelector();
+  initAutoLeadCapture();
+  initOrderForm();
+
   // Initialize Facebook Pixel if configured
   APP_CONFIG.pixel.init();
-
-  // Track initial ViewContent event
   APP_CONFIG.pixel.track("ViewContent", {
-    content_name: APP_CONFIG.product.name,
+    content_name: currentProduct ? currentProduct.name : APP_CONFIG.product.name,
     currency: "DZD",
     value: APP_CONFIG.offers[1].price
   });
-
-  initSlider();
-  initWilayaSelector();
-  initOfferSelector();
-  initOrderForm();
-  initSmoothScroll();
 });
 
 // ======================================================
-// 1. TOUCH & DRAG SLIDER LOGIC
+// 1. SESSION TOKEN INITIALIZATION (FOR LEAD TRACKING)
+// ======================================================
+function initSessionToken() {
+  sessionToken = sessionStorage.getItem("ecom_lead_session_token");
+  if (!sessionToken) {
+    sessionToken = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    sessionStorage.setItem("ecom_lead_session_token", sessionToken);
+  }
+}
+
+// ======================================================
+// 2. DYNAMIC PRODUCT LOADING FROM NEON DB
+// ======================================================
+async function loadActiveProduct() {
+  try {
+    // Check if a specific product slug is in URL query (?p=slug)
+    const urlParams = new URLSearchParams(window.location.search);
+    const slugParam = urlParams.get('p');
+
+    const res = await fetch('/api/products');
+    const data = await res.json();
+
+    if (data.success && Array.isArray(data.products) && data.products.length > 0) {
+      if (slugParam) {
+        currentProduct = data.products.find(p => p.slug === slugParam) || data.products[0];
+      } else {
+        currentProduct = data.products.find(p => p.is_active) || data.products[0];
+      }
+
+      if (currentProduct) {
+        applyProductToUI(currentProduct);
+      }
+    }
+  } catch (err) {
+    console.warn("Could not fetch active product from DB, using fallback config:", err);
+  }
+}
+
+function applyProductToUI(product) {
+  // Update Product Name
+  const heroTitle = document.querySelector(".hero-title");
+  if (heroTitle && product.name) heroTitle.textContent = product.name;
+  document.title = `${product.name} | اطلب الآن الدفع عند الاستلام`;
+
+  // Update Prices in APP_CONFIG
+  if (product.price_1) APP_CONFIG.offers[1].price = product.price_1;
+  if (product.price_2) {
+    APP_CONFIG.offers[2].price = product.price_2;
+    APP_CONFIG.offers[2].oldPrice = product.price_1 * 2;
+    APP_CONFIG.offers[2].save = (product.price_1 * 2) - product.price_2;
+  }
+  if (product.price_3) {
+    APP_CONFIG.offers[3].price = product.price_3;
+    APP_CONFIG.offers[3].oldPrice = product.price_1 * 3;
+    APP_CONFIG.offers[3].save = (product.price_1 * 3) - product.price_3;
+  }
+
+  // Update Offers Grid in HTML
+  const offer1Price = document.querySelector('.offer-option[data-qty="1"] .offer-price');
+  const offer2Price = document.querySelector('.offer-option[data-qty="2"] .offer-price');
+  const offer2Save = document.querySelector('.offer-option[data-qty="2"] .offer-save');
+  const offer3Price = document.querySelector('.offer-option[data-qty="3"] .offer-price');
+  const offer3Save = document.querySelector('.offer-option[data-qty="3"] .offer-save');
+
+  if (offer1Price) offer1Price.textContent = `${APP_CONFIG.offers[1].price.toLocaleString("fr-FR")} د.ج`;
+  if (offer2Price) offer2Price.textContent = `${APP_CONFIG.offers[2].price.toLocaleString("fr-FR")} د.ج`;
+  if (offer2Save && APP_CONFIG.offers[2].save > 0) offer2Save.textContent = `وفّر ${APP_CONFIG.offers[2].save.toLocaleString("fr-FR")} د.ج`;
+  if (offer3Price) offer3Price.textContent = `${APP_CONFIG.offers[3].price.toLocaleString("fr-FR")} د.ج`;
+  if (offer3Save && APP_CONFIG.offers[3].save > 0) offer3Save.textContent = `وفّر ${APP_CONFIG.offers[3].save.toLocaleString("fr-FR")} د.ج`;
+
+  // Update Images Slider if product has custom images
+  let images = [];
+  try {
+    images = typeof product.images === 'string' ? JSON.parse(product.images) : product.images;
+  } catch {
+    images = [product.images];
+  }
+
+  if (Array.isArray(images) && images.length > 0) {
+    const track = document.getElementById("sliderTrack");
+    const dotsContainer = document.getElementById("sliderDots");
+
+    if (track && dotsContainer) {
+      track.innerHTML = "";
+      dotsContainer.innerHTML = "";
+
+      images.forEach((imgSrc, idx) => {
+        const slide = document.createElement("div");
+        slide.className = "slide";
+        slide.innerHTML = `<img src="${imgSrc}" alt="${product.name} - صورة ${idx + 1}" width="500" height="500" ${idx === 0 ? 'fetchpriority="high"' : 'loading="lazy"'}>`;
+        track.appendChild(slide);
+
+        const dot = document.createElement("span");
+        dot.className = `slider-dot ${idx === 0 ? 'active' : ''}`;
+        dot.dataset.index = idx;
+        dotsContainer.appendChild(dot);
+      });
+    }
+  }
+}
+
+// ======================================================
+// 3. IMAGE SLIDER LOGIC
 // ======================================================
 function initSlider() {
   const track = document.getElementById("sliderTrack");
-  const slides = document.querySelectorAll(".slide");
-  const dots = document.querySelectorAll(".slider-dot");
   const prevBtn = document.getElementById("sliderPrev");
   const nextBtn = document.getElementById("sliderNext");
   const wrapper = document.querySelector(".slider-wrapper");
 
-  if (!track || slides.length === 0) return;
+  if (!track || !wrapper) return;
 
   let currentIndex = 0;
   let startX = 0;
   let isDragging = false;
-  // No autoplay — user drives the slides
+
+  function getSlides() { return document.querySelectorAll(".slide"); }
+  function getDots() { return document.querySelectorAll(".slider-dot"); }
 
   function updateSlider(index) {
+    const slides = getSlides();
+    const dots = getDots();
+    if (slides.length === 0) return;
+
     currentIndex = (index + slides.length) % slides.length;
     track.style.transition = "transform 0.35s cubic-bezier(0.2, 0.9, 0.3, 1)";
     track.style.transform = `translateX(-${currentIndex * 100}%)`;
@@ -48,7 +165,6 @@ function initSlider() {
     });
   }
 
-  // Button navigation
   if (prevBtn) {
     prevBtn.addEventListener("click", () => updateSlider(currentIndex - 1));
   }
@@ -57,13 +173,15 @@ function initSlider() {
     nextBtn.addEventListener("click", () => updateSlider(currentIndex + 1));
   }
 
-  // Dot navigation
-  dots.forEach(dot => {
-    dot.addEventListener("click", (e) => {
-      const target = parseInt(e.target.dataset.index, 10);
-      updateSlider(target);
+  const dotsContainer = document.getElementById("sliderDots");
+  if (dotsContainer) {
+    dotsContainer.addEventListener("click", (e) => {
+      if (e.target.classList.contains("slider-dot")) {
+        const target = parseInt(e.target.dataset.index, 10);
+        updateSlider(target);
+      }
     });
-  });
+  }
 
   // Touch Swipe
   wrapper.addEventListener("touchstart", (e) => {
@@ -85,7 +203,7 @@ function initSlider() {
 }
 
 // ======================================================
-// 2. WILAYAS & BALADIAS DYNAMIC DROPDOWN
+// 4. WILAYAS & BALADIAS DYNAMIC DROPDOWN
 // ======================================================
 function initWilayaSelector() {
   const willayaSelect = document.getElementById("willayaSelect");
@@ -93,7 +211,8 @@ function initWilayaSelector() {
 
   if (!willayaSelect || !baladiaSelect) return;
 
-  // Populate 58 Wilayas
+  // Clear and populate 58 Wilayas
+  willayaSelect.innerHTML = '<option value="">اختر الولاية</option>';
   WILAYAS_DATA.forEach(w => {
     const opt = document.createElement("option");
     opt.value = w.id;
@@ -108,6 +227,7 @@ function initWilayaSelector() {
 
     if (!selectedId) {
       baladiaSelect.disabled = true;
+      triggerAutoLeadCapture();
       return;
     }
 
@@ -121,14 +241,13 @@ function initWilayaSelector() {
       });
       baladiaSelect.disabled = false;
     }
+    triggerAutoLeadCapture();
   });
 }
 
 // ======================================================
-// 3. DYNAMIC PRICING & QUANTITY SELECTOR
+// 5. DYNAMIC PRICING & QUANTITY SELECTOR
 // ======================================================
-let selectedQty = 2; // Default to most popular offer (2 packs)
-
 function initOfferSelector() {
   const offerCards = document.querySelectorAll(".offer-option");
   const priceDisplay = document.getElementById("totalPriceDisplay");
@@ -153,6 +272,8 @@ function initOfferSelector() {
         oldPriceDisplay.style.display = "none";
       }
     }
+
+    triggerAutoLeadCapture();
   }
 
   offerCards.forEach(card => {
@@ -167,7 +288,86 @@ function initOfferSelector() {
 }
 
 // ======================================================
-// 4. ORDER FORM SUBMISSION
+// 6. AUTO-CAPTURE CLIENT INFO (BEFORE CLICKING CONFIRM)
+// ======================================================
+function initAutoLeadCapture() {
+  const phoneInput = document.getElementById("phone");
+  const fullNameInput = document.getElementById("fullName");
+  const willayaSelect = document.getElementById("willayaSelect");
+  const baladiaSelect = document.getElementById("baladiaSelect");
+
+  // Debounced input capture
+  const debouncedCapture = () => {
+    clearTimeout(leadCaptureTimer);
+    leadCaptureTimer = setTimeout(triggerAutoLeadCapture, 600);
+  };
+
+  if (phoneInput) {
+    phoneInput.addEventListener("input", debouncedCapture);
+    phoneInput.addEventListener("blur", triggerAutoLeadCapture);
+  }
+  if (fullNameInput) {
+    fullNameInput.addEventListener("input", debouncedCapture);
+    fullNameInput.addEventListener("blur", triggerAutoLeadCapture);
+  }
+  if (willayaSelect) {
+    willayaSelect.addEventListener("change", triggerAutoLeadCapture);
+  }
+  if (baladiaSelect) {
+    baladiaSelect.addEventListener("change", triggerAutoLeadCapture);
+  }
+}
+
+async function triggerAutoLeadCapture() {
+  const phoneInput = document.getElementById("phone");
+  const fullNameInput = document.getElementById("fullName");
+  const willayaSelect = document.getElementById("willayaSelect");
+  const baladiaSelect = document.getElementById("baladiaSelect");
+
+  const phone = phoneInput ? phoneInput.value.trim() : "";
+  const fullName = fullNameInput ? fullNameInput.value.trim() : "";
+  const willayaId = willayaSelect ? parseInt(willayaSelect.value, 10) : null;
+  const willayaName = willayaSelect && willayaSelect.selectedIndex >= 0 
+    ? willayaSelect.options[willayaSelect.selectedIndex].text 
+    : "";
+  const baladia = baladiaSelect ? baladiaSelect.value.trim() : "";
+
+  // Only capture if user has started typing phone (>= 6 digits) or full name
+  if (phone.length < 6 && fullName.length < 2) {
+    return;
+  }
+
+  const offer = APP_CONFIG.offers[selectedQty] || APP_CONFIG.offers[1];
+  const prodName = currentProduct ? currentProduct.name : APP_CONFIG.product.name;
+  const prodId = currentProduct ? currentProduct.id : null;
+
+  const payload = {
+    sessionToken,
+    fullName,
+    phone,
+    willaya: willayaId ? willayaName : "",
+    willayaId: willayaId || null,
+    baladia,
+    quantity: selectedQty,
+    price: offer.price,
+    productId: prodId,
+    productName: prodName
+  };
+
+  try {
+    await fetch('/api/leads', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    console.log("📡 [Lead Saver] Client draft info captured silently.");
+  } catch (err) {
+    console.warn("Could not sync draft lead to DB:", err);
+  }
+}
+
+// ======================================================
+// 7. ORDER FORM SUBMISSION
 // ======================================================
 function initOrderForm() {
   const form = document.getElementById("kakiOrderForm");
@@ -190,7 +390,7 @@ function initOrderForm() {
     const baladia = baladiaSelect.value.trim();
 
     if (!phone || phone.length < 9) {
-      alert("يرجى إدخال رقم هاتف صحيح");
+      alert("يرجى إدخال رقم هاتف صحيح (مثال: 0555123456)");
       phoneInput.focus();
       return;
     }
@@ -214,7 +414,9 @@ function initOrderForm() {
     }
 
     const wilayaObj = WILAYAS_DATA.find(w => w.id === willayaId);
-    const offer = APP_CONFIG.offers[selectedQty];
+    const offer = APP_CONFIG.offers[selectedQty] || APP_CONFIG.offers[1];
+    const prodName = currentProduct ? currentProduct.name : APP_CONFIG.product.name;
+    const prodId = currentProduct ? currentProduct.id : null;
 
     const submitBtn = document.getElementById("submitOrderBtn");
     submitBtn.disabled = true;
@@ -229,10 +431,12 @@ function initOrderForm() {
       baladia,
       quantity: selectedQty,
       price: offer.price,
-      productName: APP_CONFIG.product.name
+      productId: prodId,
+      productName: prodName,
+      sessionToken
     };
 
-    // 1. Sync with PostgreSQL Backend API if available
+    // 1. Sync with PostgreSQL Backend API
     try {
       const resp = await fetch('/api/orders', {
         method: 'POST',
@@ -253,7 +457,7 @@ function initOrderForm() {
 
     // 3. Fire Facebook Pixel Purchase Event
     APP_CONFIG.pixel.track("Purchase", {
-      content_name: APP_CONFIG.product.name,
+      content_name: prodName,
       currency: "DZD",
       value: offer.price,
       num_items: selectedQty
@@ -264,15 +468,19 @@ function initOrderForm() {
 
     // 5. Update submit button to confirmed state
     submitBtn.classList.add("confirmed");
-    submitBtn.innerHTML = `<span>✓ تم تأكيد طلبك بنجاح!</span>`;
+    submitBtn.innerHTML = `<span>✓ تم استلام طلبك بنجاح!</span>`;
     submitBtn.disabled = true;
 
     // 6. Display Confirmation Modal
     document.getElementById("modalOrderId").textContent = newOrder.id || savedOrder.id;
     document.getElementById("modalOrderDetails").textContent = 
-      `${fullName} · ${wilayaObj.name} (${baladia}) · ${selectedQty} علب · ${offer.price} ${APP_CONFIG.product.currency}`;
+      `${fullName} · ${wilayaObj ? wilayaObj.name : ''} (${baladia}) · ${selectedQty} علب · ${offer.price} ${APP_CONFIG.product.currency}`;
 
     modal.classList.add("active");
+
+    // Clear session lead token for new session
+    sessionStorage.removeItem("ecom_lead_session_token");
+    initSessionToken();
 
     // Reset Form inputs for fresh state if they dismiss modal
     form.reset();
@@ -286,7 +494,7 @@ function initOrderForm() {
 }
 
 // ======================================================
-// 5. SMOOTH SCROLL CTA LOGIC
+// 8. SMOOTH SCROLL CTA LOGIC
 // ======================================================
 function initSmoothScroll() {
   const heroCta = document.getElementById("heroCtaBtn");
