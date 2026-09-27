@@ -1,16 +1,20 @@
 {
   "name": "ecom12",
   "version": "1.0.0",
-  "description": "Algerian E-Commerce Store with Neon PostgreSQL and Vercel Support",
+  "description": "Algerian e-commerce storefront with Neon PostgreSQL and Vercel support",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "check": "node --check server.js && node --check api/index.js && node --check app.js && node --check admin.js && node --check data.js"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "abdallahGIT <114431339+114431339+abdallahGIT@users.noreply.github.com>",
+  "license": "MIT",
   "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "cors": "^2.8.6",
     "express": "^5.2.1",

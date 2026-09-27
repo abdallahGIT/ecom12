@@ -11,26 +11,29 @@ const PORT = process.env.PORT || 3000;
 // ==========================================
 // 1. DATABASE CONNECTION (NEON POSTGRESQL)
 // ==========================================
-const NEON_CONNECTION_STRING = process.env.DATABASE_URL || 
-  "postgresql://neondb_owner:npg_G84KNtlCZgrx@ep-curly-night-zak08u4u-pooler.c-2.eu-west-2.aws.neon.tech/neondb?sslmode=require";
+const DATABASE_URL = process.env.DATABASE_URL;
 
 // Clean connection URL for pg client
-const cleanDbUrl = NEON_CONNECTION_STRING.replace('&channel_binding=require', '').replace('channel_binding=require&', '');
-
-const pool = new Pool({
-  connectionString: cleanDbUrl,
-  ssl: {
-    rejectUnauthorized: false
-  },
-  max: 10,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000
-});
+const pool = DATABASE_URL
+  ? new Pool({
+      connectionString: DATABASE_URL.replace('&channel_binding=require', '').replace('channel_binding=require&', ''),
+      ssl: {
+        rejectUnauthorized: false
+      },
+      max: 10,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000
+    })
+  : null;
 
 // Cache database initialization promise
 let dbInitPromise = null;
 
 async function initDb() {
+  if (!pool) {
+    throw new Error('DATABASE_URL is not configured. Add it to the Vercel project environment variables.');
+  }
+
   if (dbInitPromise) return dbInitPromise;
 
   dbInitPromise = (async () => {
