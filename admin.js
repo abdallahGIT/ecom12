@@ -146,8 +146,9 @@ function renderProductsGrid() {
         <div class="product-card-footer">
           <span class="stock-indicator">📦 المخزون: <strong>${prod.stock || 0} علبة</strong></span>
           <div class="prod-actions">
-            <button class="btn-tbl edit-btn" onclick="openEditProductModal(${prod.id})" title="تعديل المنتج">✏️ تعديل</button>
-            <button class="btn-tbl delete" onclick="handleDeleteProduct(${prod.id}, '${escapeHtml(prod.name)}')" title="حذف المنتج">🗑️</button>
+            <a class="btn-tbl" href="/?p=${encodeURIComponent(prod.slug || '')}" target="_blank" rel="noopener" title="فتح المنتج في المتجر">🔗 فتح الرابط</a>
+            <button class="btn-tbl edit-btn" onclick="openEditProductModal(${Number(prod.id)})" title="تعديل المنتج">✏️ تعديل</button>
+            <button class="btn-tbl delete" onclick="handleDeleteProduct(${Number(prod.id)}, ${escapeHtml(JSON.stringify(prod.name || ''))})" title="حذف المنتج">🗑️</button>
           </div>
         </div>
       </div>
@@ -221,7 +222,7 @@ function renderImagePreviews() {
 
   container.innerHTML = "";
 
-  currentProductImages.forEach((imgUrl, index) => {
+  currentProductImages.filter(Boolean).forEach((imgUrl, index) => {
     const box = document.createElement("div");
     box.className = "preview-thumb-box";
     box.innerHTML = `
@@ -236,6 +237,11 @@ window.removeProductImage = function(index) {
   currentProductImages.splice(index, 1);
   renderImagePreviews();
 };
+
+function readNumberInput(id, fallback, minimum = 0) {
+  const value = Number(document.getElementById(id)?.value);
+  return Number.isFinite(value) && value >= minimum ? Math.floor(value) : fallback;
+}
 
 async function handlePhotoFilesUpload(files) {
   if (!files || files.length === 0) return;
@@ -836,6 +842,7 @@ function initEventListeners() {
   if (fileInput) {
     fileInput.addEventListener("change", (e) => {
       handlePhotoFilesUpload(e.target.files);
+      e.target.value = "";
     });
   }
 
@@ -845,10 +852,12 @@ function initEventListeners() {
   if (addUrlBtn && urlInput) {
     addUrlBtn.addEventListener("click", () => {
       const u = urlInput.value.trim();
-      if (u) {
+      if (u && /^(https?:\/\/|\/|data:image\/|assets\/|uploads\/)/i.test(u)) {
         currentProductImages.push(u);
         renderImagePreviews();
         urlInput.value = "";
+      } else if (u) {
+        alert("أدخل رابط صورة يبدأ بـ https:// أو / أو assets/");
       }
     });
   }
@@ -863,11 +872,20 @@ function initEventListeners() {
       const slug = document.getElementById("prodSlug").value.trim();
       const subtitle = document.getElementById("prodSubtitle").value.trim();
       const description = document.getElementById("prodDescription").value.trim();
-      const price_1 = parseInt(document.getElementById("prodPrice1").value, 10) || 2500;
-      const price_2 = parseInt(document.getElementById("prodPrice2").value, 10) || 4200;
-      const price_3 = parseInt(document.getElementById("prodPrice3").value, 10) || 5600;
-      const stock = parseInt(document.getElementById("prodStock").value, 10) || 50;
+      const price_1 = readNumberInput("prodPrice1", 2500);
+      const price_2 = readNumberInput("prodPrice2", 4200);
+      const price_3 = readNumberInput("prodPrice3", 5600);
+      const stock = readNumberInput("prodStock", 50);
       const is_active = document.getElementById("prodIsActive").checked;
+
+      if (!name) {
+        alert("اسم المنتج مطلوب");
+        return;
+      }
+      if (![price_1, price_2, price_3].every(value => value > 0)) {
+        alert("يجب أن تكون أسعار العروض أكبر من صفر");
+        return;
+      }
 
       const payload = {
         name,
@@ -882,6 +900,12 @@ function initEventListeners() {
         is_active
       };
 
+      const saveButton = document.getElementById("saveProductBtn");
+      if (saveButton) {
+        saveButton.disabled = true;
+        saveButton.textContent = "جاري الحفظ...";
+      }
+
       try {
         const url = editId ? `/api/products/${editId}` : '/api/products';
         const method = editId ? 'PUT' : 'POST';
@@ -892,7 +916,7 @@ function initEventListeners() {
           body: JSON.stringify(payload)
         });
 
-        const data = await res.json();
+        const data = await res.json().catch(() => ({ success: false, error: `خطأ من الخادم (${res.status})` }));
         if (data.success) {
           alert(`✓ تم حفظ منتج البذور بنجاح في قاعدة بيانات Neon!`);
           document.getElementById("productModal").classList.remove("active");
@@ -903,6 +927,11 @@ function initEventListeners() {
         }
       } catch (err) {
         alert("فشل الاتصال: " + err.message);
+      } finally {
+        if (saveButton) {
+          saveButton.disabled = false;
+          saveButton.textContent = "💾 حفظ منتج البذور في قاعدة البيانات";
+        }
       }
     });
   }

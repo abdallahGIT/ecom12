@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "check": "node --check server.js && node --check api/index.js && node --check app.js && node --check admin.js && node --check data.js"
+    "check": "node --check server.js && node --check api/index.js && node --check app.js && node --check admin.js && node --check data.js",
+    "test:products": "node tests/product-regression.js"
   },
   "keywords": [],
   "author": "abdallahGIT <114431339+abdallahGIT@users.noreply.github.com>",

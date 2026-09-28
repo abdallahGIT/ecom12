@@ -34,7 +34,46 @@ const pool = DATABASE_URL
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000
     })
-  : null;
+    : null;
+
+function normalizeProductSlug(value, fallback = `seed-${Date.now()}`) {
+  const source = String(value || '').trim().toLowerCase();
+  const slug = source
+    .normalize('NFKC')
+    .replace(/[^\w\u0600-\u06FF\u0750-\u077F0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 110);
+  return slug || fallback;
+}
+
+function parseMoney(value, fallback) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : fallback;
+}
+
+function parseStock(value, fallback) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : fallback;
+}
+
+function normalizeProductImages(images) {
+  const source = Array.isArray(images) ? images : (typeof images === 'string' && images.trim() ? [images] : []);
+  return source
+    .map(image => String(image || '').trim())
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+function normalizeProductFeatures(features) {
+  if (!Array.isArray(features)) return [];
+  return features
+    .filter(feature => feature && typeof feature === 'object')
+    .map(feature => ({ icon: String(feature.icon || '🌿').slice(0, 8), label: String(feature.label || '').trim().slice(0, 120) }))
+    .filter(feature => feature.label)
+    .slice(0, 12);
+}
 
 // Cache database initialization promise
 let dbInitPromise = null;
@@ -212,7 +251,7 @@ const storage = isVercel
 
 const upload = multer({
   storage,
-  limits: { fileSize: 15 * 1024 * 1024 }, // 15MB limit
+  limits: { fileSize: 2 * 1024 * 1024, files: 6 },
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {
       cb(null, true);
@@ -259,7 +298,7 @@ app.get('/api/health', async (req, res) => {
 // ------------------------------------------
 // Photo Upload API
 // ------------------------------------------
-app.post('/api/upload', upload.array('photos', 10), (req, res) => {
+app.post('/api/upload', upload.array('photos', 6), (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ success: false, error: 'لم يتم اختيار أي صورة' });
@@ -270,7 +309,7 @@ app.post('/api/upload', upload.array('photos', 10), (req, res) => {
         // Convert to data URI for serverless persistence without S3/disk
         return `data:${f.mimetype};base64,${f.buffer.toString('base64')}`;
       }
-      return `uploads/${f.filename}`;
+      return `/uploads/${f.filename}`;
     });
 
     res.json({ success: true, urls: fileUrls });
@@ -288,11 +327,13 @@ app.get('/api/products', async (req, res) => {
   try {
     await initDb();
     const includeAll = req.query.all === 'true';
-    const query = includeAll 
-      ? 'SELECT * FROM products ORDER BY id DESC;' 
-      : 'SELECT * FROM products WHERE is_active = true ORDER BY id DESC;';
-    
-    const result = await pool.query(query);
+    const slug = typeof req.query.slug === 'string' ? normalizeProductSlug(req.query.slug) : null;
+    const query = slug
+      ? 'SELECT * FROM products WHERE slug = $1 LIMIT 1;'
+      : includeAll
+        ? 'SELECT * FROM products ORDER BY id DESC;'
+        : 'SELECT * FROM products WHERE is_active = true ORDER BY id DESC;';
+    const result = await pool.query(query, slug ? [slug] : []);
     res.json({ success: true, products: result.rows });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -341,23 +382,15 @@ app.post('/api/products', async (req, res) => {
       return res.status(400).json({ success: false, error: 'اسم المنتج/البذور مطلوب' });
     }
 
-    const cleanSlug = (slug && slug.trim())
-      ? slug.trim().toLowerCase().replace(/[^\w\u0621-\u064A0-9]+/g, '-').replace(/^-+|-+$/g, '')
-      : `seed-${Date.now()}`;
-
-    // Ensure images is an array
-    let imagesArr = [];
-    if (Array.isArray(images)) {
-      imagesArr = images.filter(img => typeof img === 'string' && img.trim().length > 0);
-    } else if (typeof images === 'string' && images.trim()) {
-      imagesArr = [images.trim()];
-    }
+    const cleanSlug = normalizeProductSlug(slug, `seed-${Date.now()}`);
+    let imagesArr = normalizeProductImages(images);
 
     if (imagesArr.length === 0) {
       imagesArr = ['assets/slide-1.jpg'];
     }
 
-    const featuresArr = Array.isArray(features) && features.length > 0 ? features : [
+    const normalizedFeatures = normalizeProductFeatures(features);
+    const featuresArr = normalizedFeatures.length > 0 ? normalizedFeatures : [
       { icon: '🌿', label: 'طبيعية 100%' },
       { icon: '🌱', label: 'زراعة منزلية' },
       { icon: '📦', label: 'توصيل مضمون' }
@@ -375,10 +408,10 @@ app.post('/api/products', async (req, res) => {
       name.trim(),
       subtitle || 'طبيعية 100% · زراعة منزلية سهلة · توصيل لكافة الولايات',
       description || '',
-      parseInt(price_1, 10) || 2500,
-      parseInt(price_2, 10) || 4200,
-      parseInt(price_3, 10) || 5600,
-      parseInt(stock, 10) || 50,
+      parseMoney(price_1, 2500),
+      parseMoney(price_2, 4200),
+      parseMoney(price_3, 5600),
+      parseStock(stock, 50),
       JSON.stringify(imagesArr),
       JSON.stringify(featuresArr),
       is_active !== undefined ? Boolean(is_active) : true
@@ -387,7 +420,8 @@ app.post('/api/products', async (req, res) => {
     res.json({ success: true, product: result.rows[0] });
   } catch (err) {
     console.error('Error adding product:', err);
-    res.status(500).json({ success: false, error: err.message });
+    const duplicate = err.code === '23505' && String(err.constraint || '').includes('slug');
+    res.status(duplicate ? 409 : 500).json({ success: false, error: duplicate ? 'هذا الرابط مستخدم لمنتج آخر. اختر Slug مختلفاً.' : err.message });
   }
 });
 
@@ -426,16 +460,16 @@ app.put('/api/products/:id', async (req, res) => {
       WHERE id = $12
       RETURNING *;
     `, [
-      name ? name.trim() : null,
-      slug ? slug.trim() : null,
+      name !== undefined ? String(name).trim() || null : null,
+      slug !== undefined ? normalizeProductSlug(slug, `seed-${id}`) : null,
       subtitle !== undefined ? subtitle : null,
       description !== undefined ? description : null,
-      price_1 !== undefined ? parseInt(price_1, 10) : null,
-      price_2 !== undefined ? parseInt(price_2, 10) : null,
-      price_3 !== undefined ? parseInt(price_3, 10) : null,
-      stock !== undefined ? parseInt(stock, 10) : null,
-      images ? JSON.stringify(images) : null,
-      features ? JSON.stringify(features) : null,
+      price_1 !== undefined ? parseMoney(price_1, null) : null,
+      price_2 !== undefined ? parseMoney(price_2, null) : null,
+      price_3 !== undefined ? parseMoney(price_3, null) : null,
+      stock !== undefined ? parseStock(stock, null) : null,
+      images !== undefined ? JSON.stringify(normalizeProductImages(images)) : null,
+      features !== undefined ? JSON.stringify(normalizeProductFeatures(features)) : null,
       is_active !== undefined ? Boolean(is_active) : null,
       id
     ]);
@@ -446,7 +480,8 @@ app.put('/api/products/:id', async (req, res) => {
 
     res.json({ success: true, product: result.rows[0] });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    const duplicate = err.code === '23505' && String(err.constraint || '').includes('slug');
+    res.status(duplicate ? 409 : 500).json({ success: false, error: duplicate ? 'هذا الرابط مستخدم لمنتج آخر. اختر Slug مختلفاً.' : err.message });
   }
 });
 
@@ -988,6 +1023,20 @@ app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'admin.html'));
 });
 
+// Keep API failures machine-readable for the admin dashboard, including Multer errors.
+app.use((err, req, res, next) => {
+  if (!req.path.startsWith('/api/')) return next(err);
+  if (err instanceof multer.MulterError) {
+    const message = err.code === 'LIMIT_FILE_SIZE'
+      ? 'حجم الصورة كبير جداً (الحد الأقصى 2 ميغابايت للصورة)'
+      : err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE'
+        ? 'يمكن رفع 6 صور كحد أقصى لكل منتج'
+        : 'تعذر معالجة الصور المرفوعة';
+    return res.status(400).json({ success: false, error: message });
+  }
+  return res.status(err.status || 500).json({ success: false, error: err.message || 'حدث خطأ في الخادم' });
+});
+
 // Start Server if executed directly (Local Node.js)
 if (require.main === module) {
   app.listen(PORT, () => {
@@ -999,3 +1048,10 @@ if (require.main === module) {
 
 // Export Express app for Vercel Serverless Function
 module.exports = app;
+module.exports.productUtils = {
+  normalizeProductSlug,
+  parseMoney,
+  parseStock,
+  normalizeProductImages,
+  normalizeProductFeatures
+};

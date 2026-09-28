@@ -9,6 +9,12 @@ let selectedQty = 2; // Default to 2 packs
 let sessionToken = null;
 let leadCaptureTimer = null;
 
+function escapeAttribute(value) {
+  return String(value ?? '').replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[character]));
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   initSessionToken();
   initSmoothScroll();
@@ -52,15 +58,11 @@ async function loadActiveProduct() {
     const urlParams = new URLSearchParams(window.location.search);
     const slugParam = urlParams.get('p');
 
-    const res = await fetch('/api/products');
+    const res = await fetch(slugParam ? `/api/products?slug=${encodeURIComponent(slugParam)}` : '/api/products');
     const data = await res.json();
 
     if (data.success && Array.isArray(data.products) && data.products.length > 0) {
-      if (slugParam) {
-        currentProduct = data.products.find(p => p.slug === slugParam) || data.products[0];
-      } else {
-        currentProduct = data.products.find(p => p.is_active) || data.products[0];
-      }
+      currentProduct = data.products.find(p => !slugParam || p.slug === slugParam) || data.products[0];
 
       if (currentProduct) {
         applyProductToUI(currentProduct);
@@ -122,7 +124,8 @@ function applyProductToUI(product) {
       images.forEach((imgSrc, idx) => {
         const slide = document.createElement("div");
         slide.className = "slide";
-        slide.innerHTML = `<img src="${imgSrc}" alt="${product.name} - صورة ${idx + 1}" width="500" height="500" ${idx === 0 ? 'fetchpriority="high"' : 'loading="lazy"'}>`;
+        const image = String(imgSrc || '').trim() || 'assets/slide-1.jpg';
+        slide.innerHTML = `<img src="${escapeAttribute(image)}" alt="${escapeAttribute(product.name)} - صورة ${idx + 1}" width="500" height="500" ${idx === 0 ? 'fetchpriority="high"' : 'loading="lazy"'} onerror="this.onerror=null;this.src='assets/slide-1.jpg'">`;
         track.appendChild(slide);
 
         const dot = document.createElement("span");
