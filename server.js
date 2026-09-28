@@ -10,6 +10,7 @@ const {
   listOrders: listEcoTrackOrders,
   cancelParcel: cancelEcoTrackParcel,
   getFees: getEcoTrackFees,
+  normalizeFees: normalizeEcoTrackFees,
   getProducts: getEcoTrackProducts,
   getCommunes: getEcoTrackCommunes,
   normalizeStatus: normalizeEcoTrackStatus
@@ -142,6 +143,7 @@ async function initDb() {
           baladia VARCHAR(100),
           quantity INT NOT NULL DEFAULT 1,
           price INT NOT NULL DEFAULT 0,
+          delivery_fee INT NOT NULL DEFAULT 0,
           status VARCHAR(50) NOT NULL DEFAULT 'abandoned',
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -154,10 +156,12 @@ async function initDb() {
         ALTER TABLE orders ALTER COLUMN willaya DROP NOT NULL;
         ALTER TABLE orders ALTER COLUMN baladia DROP NOT NULL;
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_type VARCHAR(24) DEFAULT 'home';
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_fee INT NOT NULL DEFAULT 0;
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS ecotrack_tracking VARCHAR(120);
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS ecotrack_status VARCHAR(120);
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS ecotrack_updated_at TIMESTAMP WITH TIME ZONE;
         ALTER TABLE leads ADD COLUMN IF NOT EXISTS willaya_id INT;
+        ALTER TABLE leads ADD COLUMN IF NOT EXISTS delivery_fee INT NOT NULL DEFAULT 0;
         ALTER TABLE leads ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
       `);
 
@@ -550,7 +554,8 @@ app.post('/api/orders', async (req, res) => {
       productName,
       sessionToken,
       note,
-      deliveryType
+      deliveryType,
+      deliveryFee
     } = req.body;
 
     if (!fullName || !phone) {
@@ -560,12 +565,13 @@ app.post('/api/orders', async (req, res) => {
     const orderId = id || `ORD-${Date.now().toString().slice(-4)}${Math.floor(Math.random() * 90 + 10)}`;
     const qty = parseInt(quantity, 10) || 1;
     const finalPrice = parseInt(price, 10) || 0;
+    const finalDeliveryFee = parseStock(deliveryFee, 0);
 
     const result = await pool.query(`
       INSERT INTO orders (
         id, product_id, product_name, full_name, phone,
-        willaya, baladia, quantity, price, status, note, delivery_type
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'new', $10, $11)
+        willaya, baladia, quantity, price, delivery_fee, status, note, delivery_type
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'new', $11, $12)
       RETURNING *;
     `, [
       orderId,
@@ -577,6 +583,7 @@ app.post('/api/orders', async (req, res) => {
       baladia ? baladia.trim() : '',
       qty,
       finalPrice,
+      finalDeliveryFee,
       note || '',
       deliveryType === 'stop_desk' ? 'stop_desk' : 'home'
     ]);
@@ -665,6 +672,19 @@ app.get('/api/ecotrack/fees', async (req, res) => {
     res.json({ success: true, fees, provider: settings.provider });
   } catch (err) {
     res.status(502).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/delivery-fees', async (req, res) => {
+  try {
+    await initDb();
+    const settings = await getEcoTrackSettings(pool);
+    const fees = normalizeEcoTrackFees(await getEcoTrackFees(settings));
+    const byWilaya = Object.fromEntries(fees.map(fee => [fee.wilayaId, { home: fee.home, stopDesk: fee.stopDesk }]));
+    res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
+    res.json({ success: true, fees: byWilaya, provider: settings.provider });
+  } catch (err) {
+    res.status(502).json({ success: false, error: err.message, fees: {} });
   }
 });
 
@@ -848,6 +868,7 @@ app.post('/api/leads', async (req, res) => {
       baladia,
       quantity,
       price,
+      deliveryFee,
       productId,
       productName
     } = req.body;
@@ -861,13 +882,14 @@ app.post('/api/leads', async (req, res) => {
     const leadId = `LEAD-${Date.now().toString().slice(-4)}${Math.floor(Math.random() * 90 + 10)}`;
     const qty = parseInt(quantity, 10) || 1;
     const finalPrice = parseInt(price, 10) || 0;
+    const finalDeliveryFee = parseStock(deliveryFee, 0);
 
     const query = `
       INSERT INTO leads (
         id, session_token, product_id, product_name,
         full_name, phone, willaya, willaya_id, baladia,
-        quantity, price, status, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'abandoned', CURRENT_TIMESTAMP)
+        quantity, price, delivery_fee, status, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'abandoned', CURRENT_TIMESTAMP)
       ON CONFLICT (session_token) DO UPDATE SET
         full_name = COALESCE(NULLIF(EXCLUDED.full_name, ''), leads.full_name),
         phone = COALESCE(NULLIF(EXCLUDED.phone, ''), leads.phone),
@@ -876,6 +898,7 @@ app.post('/api/leads', async (req, res) => {
         baladia = COALESCE(NULLIF(EXCLUDED.baladia, ''), leads.baladia),
         quantity = EXCLUDED.quantity,
         price = EXCLUDED.price,
+        delivery_fee = EXCLUDED.delivery_fee,
         product_id = COALESCE(EXCLUDED.product_id, leads.product_id),
         product_name = COALESCE(EXCLUDED.product_name, leads.product_name),
         updated_at = CURRENT_TIMESTAMP
@@ -893,7 +916,8 @@ app.post('/api/leads', async (req, res) => {
       willayaId ? parseInt(willayaId, 10) : null,
       baladia ? baladia.trim() : '',
       qty,
-      finalPrice
+      finalPrice,
+      finalDeliveryFee
     ]);
 
     res.json({ success: true, lead: result.rows[0], sessionToken: token });

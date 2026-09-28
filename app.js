@@ -8,6 +8,7 @@ let currentProduct = null;
 let selectedQty = 2; // Default to 2 packs
 let sessionToken = null;
 let leadCaptureTimer = null;
+let deliveryFees = {};
 
 function escapeAttribute(value) {
   return String(value ?? '').replace(/[&<>"']/g, character => ({
@@ -20,8 +21,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   initSmoothScroll();
   initWilayaSelector();
   
-  // Load Product Data dynamically from Neon DB
-  await loadActiveProduct();
+  // Load product and live delivery data before initializing checkout controls.
+  await Promise.all([loadActiveProduct(), loadDeliveryFees()]);
 
   // Initialize UI features
   initSlider();
@@ -46,6 +47,18 @@ function initSessionToken() {
   if (!sessionToken) {
     sessionToken = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     sessionStorage.setItem("ecom_lead_session_token", sessionToken);
+  }
+}
+
+async function loadDeliveryFees() {
+  try {
+    const response = await fetch('/api/delivery-fees');
+    const data = await response.json();
+    if (data.success && data.fees && typeof data.fees === 'object') {
+      deliveryFees = data.fees;
+    }
+  } catch (err) {
+    console.warn('Could not load live delivery fees:', err);
   }
 }
 
@@ -230,6 +243,7 @@ function initWilayaSelector() {
 
     if (!selectedId) {
       baladiaSelect.disabled = true;
+      updateTotalPrice();
       triggerAutoLeadCapture();
       return;
     }
@@ -244,6 +258,7 @@ function initWilayaSelector() {
       });
       baladiaSelect.disabled = false;
     }
+    updateTotalPrice();
     triggerAutoLeadCapture();
   });
 }
@@ -251,6 +266,33 @@ function initWilayaSelector() {
 // ======================================================
 // 5. DYNAMIC PRICING & QUANTITY SELECTOR
 // ======================================================
+function getSelectedDeliveryFee() {
+  const wilayaSelect = document.getElementById('willayaSelect');
+  const wilayaId = wilayaSelect ? parseInt(wilayaSelect.value, 10) : 0;
+  const fee = deliveryFees[wilayaId] || deliveryFees[String(wilayaId)];
+  return fee ? Number(fee.home || fee.tarif || fee.price || 0) : 0;
+}
+
+function updateTotalPrice() {
+  const offer = APP_CONFIG.offers[selectedQty] || APP_CONFIG.offers[1];
+  const deliveryFee = getSelectedDeliveryFee();
+  const totalPriceDisplay = document.getElementById('totalPriceDisplay');
+  const oldPriceDisplay = document.getElementById('oldPriceDisplay');
+  const deliveryFeeDisplay = document.getElementById('deliveryFeeDisplay');
+  const total = offer.price + deliveryFee;
+
+  if (totalPriceDisplay) totalPriceDisplay.textContent = `${total.toLocaleString('fr-FR')} ${APP_CONFIG.product.currency}`;
+  if (oldPriceDisplay && offer.oldPrice) {
+    oldPriceDisplay.textContent = `${(offer.oldPrice + deliveryFee).toLocaleString('fr-FR')} ${APP_CONFIG.product.currency}`;
+  }
+  if (deliveryFeeDisplay) {
+    deliveryFeeDisplay.textContent = deliveryFee > 0
+      ? `رسوم التوصيل: ${deliveryFee.toLocaleString('fr-FR')} ${APP_CONFIG.product.currency}`
+      : 'رسوم التوصيل: اختر الولاية';
+  }
+  return { productPrice: offer.price, deliveryFee, total };
+}
+
 function initOfferSelector() {
   const offerCards = document.querySelectorAll(".offer-option");
   const priceDisplay = document.getElementById("totalPriceDisplay");
@@ -266,10 +308,9 @@ function initOfferSelector() {
     });
 
     if (priceDisplay && offer) {
-      priceDisplay.textContent = `${offer.price.toLocaleString("fr-FR")} ${APP_CONFIG.product.currency}`;
+      updateTotalPrice();
       
       if (offer.oldPrice && oldPriceDisplay) {
-        oldPriceDisplay.textContent = `${offer.oldPrice.toLocaleString("fr-FR")} ${APP_CONFIG.product.currency}`;
         oldPriceDisplay.style.display = "inline";
       } else if (oldPriceDisplay) {
         oldPriceDisplay.style.display = "none";
@@ -341,6 +382,7 @@ async function triggerAutoLeadCapture() {
   }
 
   const offer = APP_CONFIG.offers[selectedQty] || APP_CONFIG.offers[1];
+  const deliveryFee = getSelectedDeliveryFee();
   const prodName = currentProduct ? currentProduct.name : APP_CONFIG.product.name;
   const prodId = currentProduct ? currentProduct.id : null;
 
@@ -353,6 +395,7 @@ async function triggerAutoLeadCapture() {
     baladia,
     quantity: selectedQty,
     price: offer.price,
+    deliveryFee,
     productId: prodId,
     productName: prodName
   };
@@ -418,6 +461,7 @@ function initOrderForm() {
 
     const wilayaObj = WILAYAS_DATA.find(w => w.id === willayaId);
     const offer = APP_CONFIG.offers[selectedQty] || APP_CONFIG.offers[1];
+    const pricing = updateTotalPrice();
     const prodName = currentProduct ? currentProduct.name : APP_CONFIG.product.name;
     const prodId = currentProduct ? currentProduct.id : null;
 
@@ -434,6 +478,7 @@ function initOrderForm() {
       baladia,
       quantity: selectedQty,
       price: offer.price,
+      deliveryFee: pricing.deliveryFee,
       productId: prodId,
       productName: prodName,
       sessionToken
@@ -462,7 +507,7 @@ function initOrderForm() {
     APP_CONFIG.pixel.track("Purchase", {
       content_name: prodName,
       currency: "DZD",
-      value: offer.price,
+      value: pricing.total,
       num_items: selectedQty
     });
 
@@ -477,7 +522,7 @@ function initOrderForm() {
     // 6. Display Confirmation Modal
     document.getElementById("modalOrderId").textContent = newOrder.id || savedOrder.id;
     document.getElementById("modalOrderDetails").textContent = 
-      `${fullName} · ${wilayaObj ? wilayaObj.name : ''} (${baladia}) · ${selectedQty} علب · ${offer.price} ${APP_CONFIG.product.currency}`;
+      `${fullName} · ${wilayaObj ? wilayaObj.name : ''} (${baladia}) · ${selectedQty} علب · ${pricing.total} ${APP_CONFIG.product.currency}`;
 
     modal.classList.add("active");
 

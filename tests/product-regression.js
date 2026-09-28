@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const app = require('../server');
 const utils = app.productUtils;
+const ecotrack = require('../ecotrack');
 
 assert.equal(utils.normalizeProductSlug('  منتج جديد !!! '), 'منتج-جديد');
 assert.match(utils.normalizeProductSlug('!!!'), /^seed-/);
@@ -14,6 +15,16 @@ assert.deepEqual(
 assert.deepEqual(
   utils.normalizeProductFeatures([{ icon: '🌿', label: 'جيد' }, { label: '' }]),
   [{ icon: '🌿', label: 'جيد' }]
+);
+assert.deepEqual(
+  ecotrack.normalizeFees([
+    { wilaya_id: 16, tarif: '600', tarif_stopdesk: '400' },
+    { wilaya_id: 57, tarif: 1200, tarif_stopdesk: 900 }
+  ]),
+  [
+    { wilayaId: 16, home: 600, stopDesk: 400 },
+    { wilayaId: 49, home: 1200, stopDesk: 900 }
+  ]
 );
 
 console.log('product regression tests: PASS');

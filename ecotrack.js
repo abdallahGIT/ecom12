@@ -1,6 +1,7 @@
 const OFFICIAL_TO_ECOTRACK = {
   49: 57, 50: 58, 51: 51, 52: 50, 53: 52, 54: 49, 55: 55, 56: 56, 57: 53, 58: 54
 };
+const ECOTRACK_TO_OFFICIAL = Object.fromEntries(Object.entries(OFFICIAL_TO_ECOTRACK).map(([official, eco]) => [eco, Number(official)]));
 
 const COMMUNE_ALIASES = {
   mahelma: 'maalma', ouzellaguen: 'ouzellaguene', msirda: 'msirda fouaga',
@@ -119,7 +120,7 @@ async function createParcel(order, config) {
     adresse: `${commune.name} - ${order.willaya}`,
     commune: commune.name,
     code_wilaya: code,
-    montant: Math.round(Number(order.price || 0)),
+    montant: Math.round(Number(order.price || 0) + Number(order.delivery_fee || order.deliveryFee || 0)),
     produit: order.product_name || 'بذور الكاكي الفاخرة',
     type: 1,
     stop_desk: order.delivery_type === 'stop_desk' ? 1 : 0,
@@ -149,6 +150,26 @@ async function getFees(config) {
   return Array.isArray(data?.livraison) ? data.livraison : arrayFrom(data, ['data', 'fees']);
 }
 
+function normalizeFees(rawFees) {
+  return (Array.isArray(rawFees) ? rawFees : [])
+    .map(item => {
+      const rawId = item?.wilaya_id ?? item?.code_wilaya ?? item?.wilaya ?? item?.code ?? item?.id;
+      const match = String(rawId ?? '').match(/\d{1,2}/);
+      const ecoId = match ? Number(match[0]) : 0;
+      const wilayaId = ECOTRACK_TO_OFFICIAL[ecoId] || ecoId;
+      const number = value => {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : 0;
+      };
+      return {
+        wilayaId,
+        home: number(item?.tarif ?? item?.price ?? item?.home ?? item?.tarif_domicile ?? item?.tarif_home ?? item?.delivery_fee),
+        stopDesk: number(item?.tarif_stopdesk ?? item?.stop_desk ?? item?.stopdesk ?? item?.price_stopdesk ?? item?.tarif_bureau ?? item?.price ?? item?.tarif ?? item?.home)
+      };
+    })
+    .filter(item => item.wilayaId >= 1 && item.wilayaId <= 58 && (item.home > 0 || item.stopDesk > 0));
+}
+
 async function getProducts(config) {
   requireToken(config);
   const data = await requestJson(`${config.baseUrl}/get/products/list`, { headers: headers(config) });
@@ -173,4 +194,4 @@ function normalizeStatus(value) {
   return status || 'unknown';
 }
 
-module.exports = { getSettings, normalizePhone, createParcel, listOrders, cancelParcel, getFees, getProducts, getCommunes, normalizeStatus, officialWilayaId, ecoWilayaId };
+module.exports = { getSettings, normalizePhone, createParcel, listOrders, cancelParcel, getFees, normalizeFees, getProducts, getCommunes, normalizeStatus, officialWilayaId, ecoWilayaId };
