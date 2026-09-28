@@ -116,6 +116,9 @@ function renderProductsGrid() {
       images = [prod.images];
     }
     const mainImg = (images && images.length > 0) ? images[0] : 'assets/slide-1.jpg';
+    const productUrl = prod.slug
+      ? `${window.location.origin}/?p=${encodeURIComponent(prod.slug)}`
+      : `${window.location.origin}/`;
 
     card.innerHTML = `
       <div class="product-card-top">
@@ -143,10 +146,18 @@ function renderProductsGrid() {
           </div>
         </div>
 
+        <div style="margin:12px 0 4px; padding:10px; border:1px solid #E2E8F0; border-radius:10px; background:#F8FAFC;">
+          <div style="font-size:.76rem; font-weight:800; color:#475569; margin-bottom:6px;">🔗 رابط المنتج</div>
+          <div style="display:flex; gap:6px; align-items:center; direction:ltr;">
+            <input type="text" value="${escapeHtml(productUrl)}" readonly aria-label="رابط ${escapeHtml(prod.name)}" style="min-width:0; flex:1; padding:7px 8px; border:1px solid #CBD5E1; border-radius:7px; background:#fff; color:#334155; font-size:.72rem;" onclick="this.select()">
+            <button type="button" class="btn-tbl" onclick="copyProductLink(${escapeHtml(JSON.stringify(productUrl))})" title="نسخ رابط المنتج">نسخ</button>
+          </div>
+        </div>
+
         <div class="product-card-footer">
           <span class="stock-indicator">📦 المخزون: <strong>${prod.stock || 0} علبة</strong></span>
           <div class="prod-actions">
-            <a class="btn-tbl" href="/?p=${encodeURIComponent(prod.slug || '')}" target="_blank" rel="noopener" title="فتح المنتج في المتجر">🔗 فتح الرابط</a>
+            <a class="btn-tbl" href="${escapeHtml(productUrl)}" target="_blank" rel="noopener" title="فتح المنتج في المتجر">🔗 فتح الرابط</a>
             <button class="btn-tbl edit-btn" onclick="openEditProductModal(${Number(prod.id)})" title="تعديل المنتج">✏️ تعديل</button>
             <button class="btn-tbl delete" onclick="handleDeleteProduct(${Number(prod.id)}, ${escapeHtml(JSON.stringify(prod.name || ''))})" title="حذف المنتج">🗑️</button>
           </div>
@@ -157,6 +168,27 @@ function renderProductsGrid() {
     grid.appendChild(card);
   });
 }
+
+window.copyProductLink = async function(url) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(url);
+    } else {
+      const input = document.createElement('textarea');
+      input.value = url;
+      input.style.position = 'fixed';
+      input.style.opacity = '0';
+      document.body.appendChild(input);
+      input.focus();
+      input.select();
+      document.execCommand('copy');
+      input.remove();
+    }
+    alert('✓ تم نسخ رابط المنتج');
+  } catch (err) {
+    alert('تعذر نسخ الرابط. يمكنك تحديده ونسخه يدوياً.');
+  }
+};
 
 // Product Modal Handlers
 function openNewProductModal() {
