@@ -87,6 +87,11 @@ async function loadActiveProduct() {
 }
 
 function applyProductToUI(product) {
+  // Each landing-page slug can carry its own Pixel; it is initialized after this function runs.
+  if (product.pixel_id) {
+    APP_CONFIG.pixel.pixelId = String(product.pixel_id).trim();
+  }
+
   // Update Product Name
   const heroTitle = document.querySelector(".hero-title");
   if (heroTitle && product.name) heroTitle.textContent = product.name;

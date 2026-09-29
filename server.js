@@ -106,6 +106,7 @@ async function initDb() {
           stock INT NOT NULL DEFAULT 50,
           images JSONB NOT NULL DEFAULT '[]'::jsonb,
           features JSONB NOT NULL DEFAULT '[]'::jsonb,
+          pixel_id VARCHAR(32),
           is_active BOOLEAN NOT NULL DEFAULT true,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
@@ -157,6 +158,7 @@ async function initDb() {
         ALTER TABLE orders ALTER COLUMN baladia DROP NOT NULL;
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_type VARCHAR(24) DEFAULT 'home';
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_fee INT NOT NULL DEFAULT 0;
+        ALTER TABLE products ADD COLUMN IF NOT EXISTS pixel_id VARCHAR(32);
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS ecotrack_tracking VARCHAR(120);
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS ecotrack_status VARCHAR(120);
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS ecotrack_updated_at TIMESTAMP WITH TIME ZONE;
@@ -210,7 +212,7 @@ async function initDb() {
 
       // Keep the new lavender product available without changing existing catalog data.
       await client.query(`
-        INSERT INTO products (slug, name, subtitle, description, price_1, price_2, price_3, stock, images, features, is_active)
+        INSERT INTO products (slug, name, subtitle, description, price_1, price_2, price_3, stock, images, features, pixel_id, is_active)
         VALUES (
           'lavender',
           'بذور اللافندر الفاخرة',
@@ -222,6 +224,7 @@ async function initDb() {
           50,
           $1::jsonb,
           $2::jsonb,
+          '1808629570178310',
           true
         )
         ON CONFLICT (slug) DO NOTHING;
@@ -405,6 +408,7 @@ app.post('/api/products', async (req, res) => {
       stock,
       images,
       features,
+      pixelId,
       is_active
     } = req.body;
 
@@ -430,8 +434,8 @@ app.post('/api/products', async (req, res) => {
       INSERT INTO products (
         slug, name, subtitle, description,
         price_1, price_2, price_3, stock,
-        images, features, is_active
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11)
+        images, features, pixel_id, is_active
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12)
       RETURNING *;
     `, [
       cleanSlug,
@@ -444,6 +448,7 @@ app.post('/api/products', async (req, res) => {
       parseStock(stock, 50),
       JSON.stringify(imagesArr),
       JSON.stringify(featuresArr),
+      pixelId ? String(pixelId).trim().replace(/\D/g, '').slice(0, 32) || null : null,
       is_active !== undefined ? Boolean(is_active) : true
     ]);
 
@@ -471,6 +476,7 @@ app.put('/api/products/:id', async (req, res) => {
       stock,
       images,
       features,
+      pixelId,
       is_active
     } = req.body;
 
@@ -486,8 +492,9 @@ app.put('/api/products/:id', async (req, res) => {
         stock = COALESCE($8, stock),
         images = CASE WHEN $9::jsonb IS NOT NULL THEN $9::jsonb ELSE images END,
         features = CASE WHEN $10::jsonb IS NOT NULL THEN $10::jsonb ELSE features END,
-        is_active = COALESCE($11, is_active)
-      WHERE id = $12
+        pixel_id = COALESCE($11, pixel_id),
+        is_active = COALESCE($12, is_active)
+      WHERE id = $13
       RETURNING *;
     `, [
       name !== undefined ? String(name).trim() || null : null,
@@ -500,6 +507,7 @@ app.put('/api/products/:id', async (req, res) => {
       stock !== undefined ? parseStock(stock, null) : null,
       images !== undefined ? JSON.stringify(normalizeProductImages(images)) : null,
       features !== undefined ? JSON.stringify(normalizeProductFeatures(features)) : null,
+      pixelId !== undefined ? String(pixelId).trim().replace(/\D/g, '').slice(0, 32) || null : null,
       is_active !== undefined ? Boolean(is_active) : null,
       id
     ]);
