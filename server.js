@@ -208,6 +208,32 @@ async function initDb() {
         ]);
       }
 
+      // Keep the new lavender product available without changing existing catalog data.
+      await client.query(`
+        INSERT INTO products (slug, name, subtitle, description, price_1, price_2, price_3, stock, images, features, is_active)
+        VALUES (
+          'lavender',
+          'بذور اللافندر الفاخرة',
+          'رائحة طبيعية فاخرة · زراعة منزلية سهلة · توصيل لكافة الولايات',
+          'بذور اللافندر أو الخزامى للزراعة المنزلية، تمنحك أزهاراً بنفسجية جميلة ورائحة عطرية مميزة مع الدفع عند الاستلام.',
+          1990,
+          3500,
+          4900,
+          50,
+          $1::jsonb,
+          $2::jsonb,
+          true
+        )
+        ON CONFLICT (slug) DO NOTHING;
+      `, [
+        JSON.stringify(['assets/lavender.png']),
+        JSON.stringify([
+          { icon: '💜', label: 'رائحة عطرية فاخرة' },
+          { icon: '🌿', label: 'زراعة منزلية سهلة' },
+          { icon: '📦', label: 'توصيل مضمون' }
+        ])
+      ]);
+
       console.log('✅ Database schema verified and ready.');
     } catch (err) {
       console.error('⚠️ Database connection/initialization error:', err.message);
