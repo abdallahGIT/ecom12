@@ -674,13 +674,36 @@ app.put('/api/products/:id', async (req, res) => {
 
 // DELETE product
 app.delete('/api/products/:id', async (req, res) => {
+  let client;
   try {
     await initDb();
-    const { id } = req.params;
-    await pool.query('DELETE FROM products WHERE id = $1;', [id]);
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).json({ success: false, error: 'معرّف المنتج غير صالح' });
+    }
+
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const existing = await client.query('SELECT id FROM products WHERE id = $1 FOR UPDATE;', [id]);
+    if (!existing.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, error: 'المنتج غير موجود' });
+    }
+
+    // Preserve historical orders and leads if an older Neon schema has a restrictive FK.
+    await client.query('UPDATE orders SET product_id = NULL WHERE product_id = $1;', [id]);
+    await client.query('UPDATE leads SET product_id = NULL WHERE product_id = $1;', [id]);
+    await client.query('DELETE FROM products WHERE id = $1;', [id]);
+    await client.query('COMMIT');
     res.json({ success: true, message: 'تم حذف المنتج بنجاح' });
   } catch (err) {
+    if (client) {
+      try { await client.query('ROLLBACK'); } catch {}
+    }
+    console.error('Error deleting product:', err);
     res.status(500).json({ success: false, error: err.message });
+  } finally {
+    if (client) client.release();
   }
 });
 
@@ -1264,7 +1287,8 @@ app.delete('/api/leads/:id', async (req, res) => {
   try {
     await initDb();
     const { id } = req.params;
-    await pool.query('DELETE FROM leads WHERE id = $1;', [id]);
+    const result = await pool.query('DELETE FROM leads WHERE id = $1 RETURNING id;', [id]);
+    if (!result.rows[0]) return res.status(404).json({ success: false, error: 'الزبون غير موجود' });
     res.json({ success: true, message: 'تم حذف الزبون بنجاح' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

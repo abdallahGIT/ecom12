@@ -344,17 +344,12 @@ async function handlePhotoFilesUpload(files) {
 window.handleDeleteProduct = async function(productId, productName) {
   if (confirm(`هل أنت متأكد من حذف المنتج "${productName}" نهائياً من قاعدة بيانات Neon؟`)) {
     try {
-      const res = await fetch(`/api/products/${productId}`, { method: 'DELETE' });
-      const data = await res.json();
-      if (data.success) {
-        currentProducts = currentProducts.filter(p => p.id !== productId);
-        renderProductsGrid();
-        checkDbHealth();
-      } else {
-        alert("خطأ: " + data.error);
-      }
+      const { data } = await fetchAdminJson(`/api/products/${encodeURIComponent(productId)}`, { method: 'DELETE' });
+      if (!data.success) throw new Error(data.error || 'تعذر حذف المنتج');
+      await loadProducts();
+      await checkDbHealth();
     } catch (err) {
-      alert("فشل الاتصال بالسيرفر: " + err.message);
+      alert(err.message || 'فشل الاتصال بالسيرفر. لم يتم حذف المنتج.');
     }
   }
 };
@@ -729,9 +724,8 @@ window.validateEcoTrackReturns = async function() {
 window.handleDeleteOrder = async function(orderId) {
   if (confirm(`هل أنت متأكد من حذف الطلب ${orderId} نهائياً؟`)) {
     try {
-      const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}`, { method: 'DELETE' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.success) throw new Error(data.error || 'تعذر حذف الطلب');
+      const { data } = await fetchAdminJson(`/api/orders/${encodeURIComponent(orderId)}`, { method: 'DELETE' });
+      if (!data.success) throw new Error(data.error || 'تعذر حذف الطلب');
       await loadOrders();
     } catch (err) {
       alert(err.message || 'تعذر الاتصال بالخادم. لم يتم حذف الطلب.');
@@ -908,10 +902,11 @@ window.handleMarkLeadContacted = async function(leadId) {
 window.handleDeleteLead = async function(leadId) {
   if (confirm(`هل أنت متأكد من حذف الزبون ${leadId}؟`)) {
     try {
-      await fetch(`/api/leads/${leadId}`, { method: 'DELETE' });
+      const { data } = await fetchAdminJson(`/api/leads/${encodeURIComponent(leadId)}`, { method: 'DELETE' });
+      if (!data.success) throw new Error(data.error || 'تعذر حذف الزبون');
       await loadLeads();
     } catch (err) {
-      console.warn("Could not delete lead:", err);
+      alert(err.message || 'تعذر الاتصال بالخادم. لم يتم حذف الزبون.');
     }
   }
 };
