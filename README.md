@@ -16,6 +16,10 @@ npm start
 - Admin dashboard: `http://localhost:3000/admin`
 - Health check: `http://localhost:3000/api/health`
 
+## Admin access
+
+The admin dashboard and management APIs are protected by an HttpOnly signed session cookie. The initial password is `ecom12`. For production, set `ADMIN_PASSWORD` in Vercel Environment Variables to a stronger private password; changing it invalidates existing sessions.
+
 The API requires `DATABASE_URL`. The application no longer contains a database credential fallback; without the variable, the storefront remains deployable but database-backed API requests return a clear configuration error.
 
 ## EcoTrack Algeria courier integration

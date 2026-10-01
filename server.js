@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
@@ -18,6 +19,47 @@ const {
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'ecom12';
+const ADMIN_SESSION_TTL = 7 * 24 * 60 * 60;
+
+function createAdminSession() {
+  const expires = Math.floor(Date.now() / 1000) + ADMIN_SESSION_TTL;
+  const payload = `admin.${expires}`;
+  const signature = crypto.createHmac('sha256', ADMIN_PASSWORD).update(payload).digest('hex');
+  return `${payload}.${signature}`;
+}
+
+function hasValidAdminSession(req) {
+  const header = req.headers.cookie || '';
+  const match = header.match(/(?:^|;\s*)ecom12_admin=([^;]+)/);
+  if (!match) return false;
+  const [scope, expiresText, signature] = decodeURIComponent(match[1]).split('.');
+  const expires = Number(expiresText);
+  if (scope !== 'admin' || !Number.isFinite(expires) || expires < Math.floor(Date.now() / 1000) || !signature) return false;
+  const expected = crypto.createHmac('sha256', ADMIN_PASSWORD).update(`admin.${expires}`).digest('hex');
+  return signature.length === expected.length && crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+}
+
+function setAdminCookie(res, token) {
+  const secure = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL) ? '; Secure' : '';
+  res.setHeader('Set-Cookie', `ecom12_admin=${encodeURIComponent(token)}; Max-Age=${ADMIN_SESSION_TTL}; Path=/; HttpOnly; SameSite=Lax${secure}`);
+}
+
+function clearAdminCookie(res) {
+  res.setHeader('Set-Cookie', 'ecom12_admin=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax');
+}
+
+function isProtectedApi(req) {
+  const pathName = req.path;
+  if (pathName === '/api/upload') return true;
+  if (pathName === '/api/settings' || pathName.startsWith('/api/ecotrack/')) return true;
+  if (pathName === '/api/products' || pathName.startsWith('/api/products/')) return req.method !== 'GET';
+  if (pathName === '/api/orders') return req.method === 'GET';
+  if (pathName.startsWith('/api/orders/')) return true;
+  if (pathName === '/api/leads') return req.method !== 'POST';
+  if (pathName.startsWith('/api/leads/')) return true;
+  return false;
+}
 
 // ==========================================
 // 1. DATABASE CONNECTION (NEON POSTGRESQL)
@@ -257,6 +299,34 @@ initDb().catch(e => console.warn('Non-blocking DB init:', e.message));
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
+
+// Admin page and management APIs require a signed HttpOnly session cookie.
+app.use((req, res, next) => {
+  const isAdminPage = req.path === '/admin' || req.path === '/admin.html';
+  if ((isAdminPage || isProtectedApi(req)) && !hasValidAdminSession(req)) {
+    if (isAdminPage) return res.sendFile(path.join(__dirname, 'admin-login.html'));
+    return res.status(401).json({ success: false, error: 'يجب تسجيل الدخول إلى لوحة الإدارة أولاً', loginRequired: true });
+  }
+  next();
+});
+
+app.post('/api/admin/login', (req, res) => {
+  const password = String(req.body?.password || '');
+  if (password !== ADMIN_PASSWORD) {
+    return res.status(401).json({ success: false, error: 'كلمة المرور غير صحيحة' });
+  }
+  setAdminCookie(res, createAdminSession());
+  res.json({ success: true });
+});
+
+app.post('/api/admin/logout', (req, res) => {
+  clearAdminCookie(res);
+  res.json({ success: true });
+});
+
+app.get('/api/admin/session', (req, res) => {
+  res.json({ authenticated: hasValidAdminSession(req) });
+});
 
 // Upload directory handling (safe for both local & Vercel serverless)
 const isVercel = Boolean(process.env.VERCEL);
