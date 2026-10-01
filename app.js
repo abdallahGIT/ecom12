@@ -377,8 +377,8 @@ function updateTotalPrice() {
     const wilayaSelect = document.getElementById('willayaSelect');
     if (!wilayaSelect?.value) deliveryFeeDisplay.textContent = 'رسوم التوصيل: اختر الولاية';
     else if (deliveryFeesLoading) deliveryFeeDisplay.textContent = 'جار تحميل تسعيرة التوصيل...';
-    else if (!deliveryFeesReady) deliveryFeeDisplay.textContent = 'تعذر تحميل تسعيرة التوصيل';
-    else if (deliveryFee === null) deliveryFeeDisplay.textContent = 'التوصيل غير متوفر لهذه الولاية';
+    else if (!deliveryFeesReady) deliveryFeeDisplay.textContent = 'سيتم تأكيد رسوم التوصيل هاتفياً';
+    else if (deliveryFee === null) deliveryFeeDisplay.textContent = 'سيتم تأكيد رسوم التوصيل هاتفياً';
     else deliveryFeeDisplay.textContent = `رسوم التوصيل${deliveryProvider ? ` (${deliveryProvider})` : ''}: ${deliveryFee.toLocaleString('fr-FR')} ${APP_CONFIG.product.currency}`;
   }
   return { productPrice: offer.price, deliveryFee, total };
@@ -574,10 +574,6 @@ function initOrderForm() {
     const wilayaObj = shippingWilayas.find(w => w.id === willayaId);
     const offer = APP_CONFIG.offers[selectedQty] || APP_CONFIG.offers[1];
     const pricing = updateTotalPrice();
-    if (pricing.deliveryFee === null) {
-      alert('تعذر تحميل تسعيرة التوصيل لهذه الولاية. يرجى المحاولة لاحقاً.');
-      return;
-    }
     const prodName = currentProduct ? currentProduct.name : APP_CONFIG.product.name;
     const prodId = currentProduct ? currentProduct.id : null;
 
@@ -594,7 +590,7 @@ function initOrderForm() {
       baladia,
       quantity: selectedQty,
       price: offer.price,
-      deliveryFee: pricing.deliveryFee,
+      deliveryFee: pricing.deliveryFee ?? 0,
       productId: prodId,
       productName: prodName,
       sessionToken
@@ -612,6 +608,7 @@ function initOrderForm() {
         throw new Error(data.error || 'تعذر حفظ الطلب. يرجى المحاولة مرة أخرى.');
       }
       newOrder.id = data.order.id;
+      newOrder.deliveryFeePending = Boolean(data.order.delivery_fee_pending);
     } catch (err) {
       console.error("Order could not be saved:", err);
       submitBtn.disabled = false;
@@ -627,7 +624,7 @@ function initOrderForm() {
       content_type: "product",
       content_name: prodName,
       currency: "DZD",
-      value: pricing.total,
+      value: newOrder.deliveryFeePending ? offer.price : pricing.total,
       num_items: selectedQty
     });
 
@@ -642,7 +639,7 @@ function initOrderForm() {
     // 6. Display Confirmation Modal
     document.getElementById("modalOrderId").textContent = newOrder.id;
     document.getElementById("modalOrderDetails").textContent = 
-      `${fullName} · ${wilayaObj ? wilayaObj.name : ''} (${baladia}) · ${selectedQty} علب · ${pricing.total} ${APP_CONFIG.product.currency}`;
+      `${fullName} · ${wilayaObj ? wilayaObj.name : ''} (${baladia}) · ${selectedQty} علب · ${newOrder.deliveryFeePending ? `${offer.price} ${APP_CONFIG.product.currency} + رسوم التوصيل تؤكد هاتفياً` : `${pricing.total} ${APP_CONFIG.product.currency}`}`;
 
     modal.classList.add("active");
 

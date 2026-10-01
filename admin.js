@@ -370,6 +370,8 @@ async function loadOrders() {
         baladia: o.baladia,
         quantity: o.quantity,
         price: o.price,
+        deliveryFee: Number(o.delivery_fee) || 0,
+        deliveryFeePending: Boolean(o.delivery_fee_pending),
         productName: o.product_name,
         status: o.status,
         deliveryType: o.delivery_type || 'home',
@@ -558,9 +560,14 @@ function renderOrdersTable() {
       </td>
       <td>${escapeHtml(o.willaya || "")} ${o.baladia ? `· ${escapeHtml(o.baladia)}` : ''}</td>
       <td style="text-align: center; font-weight: 700;">${o.quantity || 1} علبة</td>
-      <td style="font-weight: 900;">${(o.price || 0).toLocaleString("fr-FR")} د.ج</td>
+      <td style="font-weight: 900;">
+        ${o.deliveryFeePending
+          ? `${(o.price || 0).toLocaleString("fr-FR")} د.ج <div style="font-size:.72rem;color:#B45309;margin-top:4px;">+ رسوم التوصيل قيد التأكيد</div>`
+          : `${((o.price || 0) + (o.deliveryFee || 0)).toLocaleString("fr-FR")} د.ج <div style="font-size:.7rem;color:#64748B;margin-top:4px;">المنتج ${ (o.price || 0).toLocaleString("fr-FR")} + التوصيل ${(o.deliveryFee || 0).toLocaleString("fr-FR")}</div>`}
+      </td>
       <td>
         <span class="status-badge ${statusInfo.class}">${statusInfo.label}</span>
+        ${o.deliveryFeePending ? `<div style="font-size:.72rem;color:#B45309;font-weight:800;margin-top:5px;">⚠ رسوم التوصيل غير محددة</div>` : ''}
         ${o.ecotrackTracking ? `<div style="font-size:.72rem;color:#2563EB;margin-top:4px;direction:ltr;">EcoTrack: ${escapeHtml(o.ecotrackTracking)}</div>` : ''}
         ${o.ecotrackStatus ? `<div style="font-size:.7rem;color:#64748B;margin-top:2px;">EcoTrack: ${escapeHtml(o.ecotrackStatus)}</div>` : ''}
         ${o.ecotrackReturnStatus ? `<div style="font-size:.7rem;color:#B45309;margin-top:2px;">مرتجع: ${escapeHtml(o.ecotrackReturnStatus)}</div>` : ''}
@@ -571,6 +578,7 @@ function renderOrdersTable() {
           ${o.status !== "confirmed" ? `<button class="btn-tbl confirm" onclick="handleStatusChange('${o.id}', 'confirmed')" title="تأكيد الطلب">تأكيد</button>` : ''}
           ${o.status !== "delivered" ? `<button class="btn-tbl deliver" onclick="handleStatusChange('${o.id}', 'delivered')" title="تم التوصيل">توصيل</button>` : ''}
           ${o.status !== "cancelled" ? `<button class="btn-tbl cancel" onclick="handleStatusChange('${o.id}', 'cancelled')" title="إلغاء الطلب">إلغاء</button>` : ''}
+          ${o.deliveryFeePending ? `<button class="btn-tbl confirm" onclick="handleSetDeliveryFee('${o.id}')" title="تسجيل رسوم التوصيل بعد تأكيدها">تحديد رسوم التوصيل</button>` : ''}
           ${o.ecotrackTracking ? `<button class="btn-tbl" onclick="updateEcoTrackOrder('${o.id}')" title="تعديل قبل الترحيل">تعديل</button><button class="btn-tbl cancel" onclick="cancelEcoTrack('${o.id}')" title="إلغاء الشحنة من EcoTrack">إلغاء الشحنة</button><button class="btn-tbl confirm" onclick="validateEcoTrack('${o.id}')" title="ترحيل الشحنة">ترحيل</button><button class="btn-tbl" onclick="addEcoTrackNote('${o.id}')" title="إضافة ملاحظة">ملاحظة</button><button class="btn-tbl" onclick="downloadEcoTrackLabel('${o.id}')" title="تحميل الملصق PDF">PDF</button><button class="btn-tbl" onclick="showEcoTrackUpdates('${o.id}')" title="عرض تحديثات التتبع">تتبع</button><button class="btn-tbl cancel" onclick="requestEcoTrackReturn('${o.id}')" title="طلب إرجاع">إرجاع</button>` : (o.status === 'confirmed' ? `<button class="btn-tbl confirm" onclick="pushToEcoTrack('${o.id}')" title="رفع الطلب إلى EcoTrack">🚚 رفع للشحن</button>` : '')}
           <button class="btn-tbl delete" onclick="handleDeleteOrder('${o.id}')" title="حذف">🗑️</button>
         </div>
@@ -593,6 +601,27 @@ window.handleStatusChange = async function(orderId, newStatus) {
     await loadOrders();
   } catch (err) {
     alert(err.message || 'تعذر الاتصال بالخادم. لم تتغير حالة الطلب.');
+  }
+};
+
+window.handleSetDeliveryFee = async function(orderId) {
+  const rawFee = prompt('أدخل رسوم التوصيل المؤكدة بالدينار الجزائري:');
+  if (rawFee === null) return;
+  const deliveryFee = Number(rawFee.trim());
+  if (!Number.isInteger(deliveryFee) || deliveryFee < 0) {
+    alert('أدخل مبلغاً صحيحاً بالدينار الجزائري.');
+    return;
+  }
+  try {
+    const { data } = await fetchAdminJson(`/api/orders/${encodeURIComponent(orderId)}/delivery-fee`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deliveryFee })
+    });
+    if (!data.success) throw new Error(data.error || 'تعذر حفظ رسوم التوصيل');
+    await loadOrders();
+  } catch (err) {
+    alert(err.message || 'تعذر حفظ رسوم التوصيل.');
   }
 };
 
@@ -1255,7 +1284,7 @@ function exportOrdersToCsv() {
     return;
   }
 
-  const headers = ["رقم الطلب", "التاريخ", "المنتج", "الاسم الكامل", "رقم الهاتف", "الولاية", "البلدية", "الكمية", "السعر الإجمالي", "الحالة"];
+  const headers = ["رقم الطلب", "التاريخ", "المنتج", "الاسم الكامل", "رقم الهاتف", "الولاية", "البلدية", "الكمية", "سعر المنتج", "رسوم التوصيل", "حالة رسوم التوصيل", "الإجمالي", "الحالة"];
   
   const rows = currentOrders.map(o => [
     `"${o.id || ''}"`,
@@ -1267,6 +1296,9 @@ function exportOrdersToCsv() {
     `"${o.baladia || ''}"`,
     `"${o.quantity || 1}"`,
     `"${o.price || 0}"`,
+    `"${o.deliveryFeePending ? '' : (o.deliveryFee || 0)}"`,
+    `"${o.deliveryFeePending ? 'قيد التأكيد' : 'مؤكدة'}"`,
+    `"${o.deliveryFeePending ? '' : ((o.price || 0) + (o.deliveryFee || 0))}"`,
     `"${o.status || ''}"`
   ]);
 

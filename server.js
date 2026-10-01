@@ -197,6 +197,7 @@ async function initDb() {
           price INT NOT NULL DEFAULT 0,
           status VARCHAR(50) NOT NULL DEFAULT 'new',
           note TEXT,
+          delivery_fee_pending BOOLEAN NOT NULL DEFAULT false,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
       `);
@@ -229,6 +230,7 @@ async function initDb() {
         ALTER TABLE orders ALTER COLUMN baladia DROP NOT NULL;
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_type VARCHAR(24) DEFAULT 'home';
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_fee INT NOT NULL DEFAULT 0;
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_fee_pending BOOLEAN NOT NULL DEFAULT false;
         ALTER TABLE products ADD COLUMN IF NOT EXISTS pixel_id VARCHAR(32);
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS ecotrack_tracking VARCHAR(120);
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS ecotrack_status VARCHAR(120);
@@ -785,6 +787,7 @@ app.post('/api/orders', async (req, res) => {
     const normalizedDeliveryType = deliveryType === 'stop_desk' ? 'stop_desk' : 'home';
     const normalizedWilayaId = Number(willayaId);
     let finalDeliveryFee = parseStock(deliveryFee, 0);
+    let deliveryFeePending = false;
     if (!isAdminOrder) {
       if (!Number.isInteger(normalizedWilayaId) || normalizedWilayaId < 1 || normalizedWilayaId > 58) {
         return res.status(400).json({ success: false, error: 'يرجى اختيار ولاية صحيحة' });
@@ -793,13 +796,16 @@ app.post('/api/orders', async (req, res) => {
         const { fees } = await getLiveDeliveryRates();
         const wilayaFee = fees.find(item => item.wilayaId === normalizedWilayaId);
         const authoritativeFee = wilayaFee?.[normalizedDeliveryType === 'stop_desk' ? 'stopDesk' : 'home'];
-        if (!Number.isFinite(authoritativeFee)) {
-          return res.status(422).json({ success: false, error: 'التوصيل غير متاح لهذه الولاية' });
+        if (Number.isFinite(authoritativeFee)) {
+          finalDeliveryFee = authoritativeFee;
+        } else {
+          finalDeliveryFee = 0;
+          deliveryFeePending = true;
         }
-        finalDeliveryFee = authoritativeFee;
       } catch (rateError) {
         console.error('Could not verify delivery fee:', rateError);
-        return res.status(503).json({ success: false, error: 'تعذر تحميل تسعيرة التوصيل. يرجى المحاولة لاحقاً.' });
+        finalDeliveryFee = 0;
+        deliveryFeePending = true;
       }
     }
 
@@ -826,8 +832,8 @@ app.post('/api/orders', async (req, res) => {
     const result = await client.query(`
       INSERT INTO orders (
         id, product_id, product_name, full_name, phone,
-        willaya, willaya_id, baladia, quantity, price, delivery_fee, status, note, delivery_type
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'new', $12, $13)
+        willaya, willaya_id, baladia, quantity, price, delivery_fee, delivery_fee_pending, status, note, delivery_type
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'new', $13, $14)
       RETURNING *;
     `, [
       orderId,
@@ -841,6 +847,7 @@ app.post('/api/orders', async (req, res) => {
       qty,
       finalPrice,
       finalDeliveryFee,
+      deliveryFeePending,
       String(note || '').slice(0, 2000),
       normalizedDeliveryType
     ]);
@@ -916,6 +923,24 @@ app.patch('/api/orders/:id/status', async (req, res) => {
     res.status(err.status || 500).json({ success: false, error: err.message });
   } finally {
     if (client) client.release();
+  }
+});
+
+app.patch('/api/orders/:id/delivery-fee', async (req, res) => {
+  try {
+    await initDb();
+    const fee = Number(req.body?.deliveryFee);
+    if (!Number.isInteger(fee) || fee < 0) {
+      return res.status(400).json({ success: false, error: 'أدخل رسوم توصيل صحيحة بالدينار الجزائري' });
+    }
+    const result = await pool.query(
+      'UPDATE orders SET delivery_fee = $1, delivery_fee_pending = false WHERE id = $2 RETURNING *;',
+      [fee, req.params.id]
+    );
+    if (!result.rows[0]) return res.status(404).json({ success: false, error: 'الطلب غير موجود' });
+    res.json({ success: true, order: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -1019,13 +1044,14 @@ app.post('/api/orders/:id/ecotrack/push', async (req, res) => {
     const order = await ecoOrder(req.params.id); if (!order) return res.status(404).json({ success: false, error: 'الطلب غير موجود' });
     if (order.ecotrack_tracking) return res.status(409).json({ success: false, error: `الطلب مرفوع مسبقاً برقم التتبع ${order.ecotrack_tracking}` });
     if (order.status !== 'confirmed') return res.status(409).json({ success: false, error: 'يجب تأكيد الطلب قبل رفعه إلى EcoTrack' });
+    if (order.delivery_fee_pending) return res.status(409).json({ success: false, error: 'حدد رسوم التوصيل أولاً قبل رفع الطلب إلى EcoTrack' });
     const settings = await getEcoTrackSettings(pool); const pushed = await createEcoTrackParcel({ ...order, delivery_type: req.body?.deliveryType || order.delivery_type }, settings);
     const updated = await saveEcoOrder(req.params.id, { ecotrack_tracking: pushed.tracking, ecotrack_reference: String(order.id), ecotrack_status: 'prete_a_expedier', ecotrack_updated_at: new Date(), ecotrack_last_error: null, ecotrack_raw_response: JSON.stringify(pushed.response) });
     res.json({ success: true, tracking: pushed.tracking, order: updated });
   } catch (err) { ecoError(res, err); }
 });
 app.post('/api/orders/ecotrack/bulk-push', async (req, res) => {
-  try { await initDb(); const ids = Array.isArray(req.body?.ids) && req.body.ids.length ? req.body.ids : null; const query = ids ? "SELECT * FROM orders WHERE id = ANY($1::text[]) AND status = 'confirmed' AND ecotrack_tracking IS NULL" : "SELECT * FROM orders WHERE status = 'confirmed' AND ecotrack_tracking IS NULL"; const orders = (await pool.query(query, ids ? [ids] : [])).rows; const results = { total: orders.length, pushed: [], failed: [] }; const settings = await getEcoTrackSettings(pool); for (const order of orders) { try { const pushed = await createEcoTrackParcel(order, settings); await saveEcoOrder(order.id, { ecotrack_tracking: pushed.tracking, ecotrack_reference: String(order.id), ecotrack_status: 'prete_a_expedier', ecotrack_updated_at: new Date(), ecotrack_raw_response: JSON.stringify(pushed.response) }); results.pushed.push({ id: order.id, tracking: pushed.tracking }); } catch (err) { await saveEcoOrder(order.id, { ecotrack_last_error: err.message, ecotrack_updated_at: new Date() }); results.failed.push({ id: order.id, error: err.message }); } } res.json({ success: true, ...results }); } catch (err) { ecoError(res, err); }
+  try { await initDb(); const ids = Array.isArray(req.body?.ids) && req.body.ids.length ? req.body.ids : null; const query = ids ? "SELECT * FROM orders WHERE id = ANY($1::text[]) AND status = 'confirmed' AND ecotrack_tracking IS NULL AND delivery_fee_pending = false" : "SELECT * FROM orders WHERE status = 'confirmed' AND ecotrack_tracking IS NULL AND delivery_fee_pending = false"; const orders = (await pool.query(query, ids ? [ids] : [])).rows; const results = { total: orders.length, pushed: [], failed: [] }; const settings = await getEcoTrackSettings(pool); for (const order of orders) { try { const pushed = await createEcoTrackParcel(order, settings); await saveEcoOrder(order.id, { ecotrack_tracking: pushed.tracking, ecotrack_reference: String(order.id), ecotrack_status: 'prete_a_expedier', ecotrack_updated_at: new Date(), ecotrack_raw_response: JSON.stringify(pushed.response) }); results.pushed.push({ id: order.id, tracking: pushed.tracking }); } catch (err) { await saveEcoOrder(order.id, { ecotrack_last_error: err.message, ecotrack_updated_at: new Date() }); results.failed.push({ id: order.id, error: err.message }); } } res.json({ success: true, ...results }); } catch (err) { ecoError(res, err); }
 });
 app.post('/api/orders/:id/ecotrack/update', async (req, res) => { try { const order = await ecoOrder(req.params.id); if (!order?.ecotrack_tracking) return res.status(409).json({ success: false, error: 'لا يوجد رقم تتبع لهذا الطلب' }); const settings = await getEcoTrackSettings(pool); const response = await updateEcoTrackParcel(order.ecotrack_tracking, req.body || {}, settings); const updated = await saveEcoOrder(req.params.id, { ecotrack_updated_at: new Date(), ecotrack_raw_response: JSON.stringify(response), ecotrack_last_error: null }); res.json({ success: true, response, order: updated }); } catch (err) { ecoError(res, err); } });
 app.post('/api/orders/:id/ecotrack/validate', async (req, res) => { try { const order = await ecoOrder(req.params.id); if (!order?.ecotrack_tracking) return res.status(409).json({ success: false, error: 'لا يوجد رقم تتبع لهذا الطلب' }); const response = await validateEcoTrackParcel(order.ecotrack_tracking, Boolean(req.body?.pickup), await getEcoTrackSettings(pool)); const updated = await saveEcoOrder(req.params.id, { ecotrack_status: 'expedie', ecotrack_shipped_at: new Date(), ecotrack_updated_at: new Date(), ecotrack_raw_response: JSON.stringify(response) }); res.json({ success: true, response, order: updated }); } catch (err) { ecoError(res, err); } });

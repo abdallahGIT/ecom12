@@ -35,7 +35,9 @@ ECOTRACK_PROVIDER=navexdelivery
 ECOTRACK_API_TOKEN=your-private-token
 ```
 
-For the 48HR service, set `ECOTRACK_PROVIDER` to the provider slug supplied for your account (for example, `48hr`) and add its private token in Vercel or the admin integration form. If the account uses a custom API host, set `ECOTRACK_API_URL` too. The storefront loads provider wilayas, communes, and `/get/fees` through server routes; confirmed customer orders have their delivery fee recalculated on the server. Without a configured provider token, delivery fees cannot load and customer checkout is held until pricing is available. Never put the token in frontend code or send it in chat.
+For the 48HR service, set `ECOTRACK_PROVIDER` to the provider slug supplied for your account (for example, `48hr`) and add its private token in Vercel or the admin integration form. If the account uses a custom API host, set `ECOTRACK_API_URL` too. The storefront loads provider wilayas, communes, and `/get/fees` through server routes; confirmed customer orders have their delivery fee recalculated on the server. If a fee cannot be loaded, checkout still records the customer order and leaves its delivery fee pending. Never put the token in frontend code or send it in chat.
+
+If the fee service errors or times out, checkout still saves the order with `delivery_fee_pending` set. The storefront tells the customer the delivery fee will be confirmed by phone. Admin orders display a pending marker and provide **تحديد رسوم التوصيل** to save the confirmed amount later.
 
 The admin dashboard supports token validation, official wilaya/commune/desk lookup, delivery fees, single and bulk shipment creation, editing before validation, shipment validation/pickup, cancellation, tracking history, shipment notes, return requests, returned-package receipt confirmation, PDF labels, status filtering, and synchronization. The customer browser never receives the courier token. Confirm an order first, then use **رفع للشحن**; after creation use **ترحيل** to call EcoTrack's `valid/order` endpoint.
 

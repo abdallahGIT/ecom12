@@ -215,7 +215,10 @@ async function getDesks(config) {
 }
 async function getFees(config) {
   requireToken(config);
-  const data = await requestJson(`${config.baseUrl}/get/fees`, { headers: headers(config) });
+  const data = await requestJson(`${config.baseUrl}/get/fees`, {
+    headers: headers(config),
+    signal: AbortSignal.timeout(5000)
+  });
   return Array.isArray(data?.livraison) ? data.livraison : arrayFrom(data, ['data', 'fees']);
 }
 function normalizeFees(rawFees) {
