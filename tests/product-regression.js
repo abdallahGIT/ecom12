@@ -22,8 +22,8 @@ assert.deepEqual(
     { wilaya_id: 57, tarif: 1200, tarif_stopdesk: 900 }
   ]),
   [
-    { wilayaId: 16, home: 600, stopDesk: 400 },
-    { wilayaId: 49, home: 1200, stopDesk: 900 }
+    { wilayaId: 16, ecoWilayaId: 16, home: 600, stopDesk: 400 },
+    { wilayaId: 49, ecoWilayaId: 57, home: 1200, stopDesk: 900 }
   ]
 );
 

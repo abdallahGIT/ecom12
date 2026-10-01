@@ -344,6 +344,7 @@ async function loadOrders() {
         deliveryType: o.delivery_type || 'home',
         ecotrackTracking: o.ecotrack_tracking || '',
         ecotrackStatus: o.ecotrack_status || '',
+        ecotrackReturnStatus: o.ecotrack_return_status || '',
         note: o.note,
         createdAt: o.created_at ? new Date(o.created_at).toLocaleString("fr-FR", { hour12: false }) : '-'
       }));
@@ -529,7 +530,8 @@ function renderOrdersTable() {
       <td>
         <span class="status-badge ${statusInfo.class}">${statusInfo.label}</span>
         ${o.ecotrackTracking ? `<div style="font-size:.72rem;color:#2563EB;margin-top:4px;direction:ltr;">EcoTrack: ${escapeHtml(o.ecotrackTracking)}</div>` : ''}
-        ${o.ecotrackStatus ? `<div style="font-size:.7rem;color:#64748B;margin-top:2px;">${escapeHtml(o.ecotrackStatus)}</div>` : ''}
+        ${o.ecotrackStatus ? `<div style="font-size:.7rem;color:#64748B;margin-top:2px;">EcoTrack: ${escapeHtml(o.ecotrackStatus)}</div>` : ''}
+        ${o.ecotrackReturnStatus ? `<div style="font-size:.7rem;color:#B45309;margin-top:2px;">مرتجع: ${escapeHtml(o.ecotrackReturnStatus)}</div>` : ''}
       </td>
       <td style="font-size: 0.78rem; color: #64748B;">${o.createdAt || "-"}</td>
       <td>
@@ -537,7 +539,7 @@ function renderOrdersTable() {
           ${o.status !== "confirmed" ? `<button class="btn-tbl confirm" onclick="handleStatusChange('${o.id}', 'confirmed')" title="تأكيد الطلب">تأكيد</button>` : ''}
           ${o.status !== "delivered" ? `<button class="btn-tbl deliver" onclick="handleStatusChange('${o.id}', 'delivered')" title="تم التوصيل">توصيل</button>` : ''}
           ${o.status !== "cancelled" ? `<button class="btn-tbl cancel" onclick="handleStatusChange('${o.id}', 'cancelled')" title="إلغاء الطلب">إلغاء</button>` : ''}
-          ${o.ecotrackTracking ? `<button class="btn-tbl cancel" onclick="cancelEcoTrack('${o.id}')" title="إلغاء الشحنة من EcoTrack">إلغاء الشحنة</button>` : (o.status === 'confirmed' ? `<button class="btn-tbl confirm" onclick="pushToEcoTrack('${o.id}')" title="رفع الطلب إلى EcoTrack">🚚 رفع للشحن</button>` : '')}
+          ${o.ecotrackTracking ? `<button class="btn-tbl" onclick="updateEcoTrackOrder('${o.id}')" title="تعديل قبل الترحيل">تعديل</button><button class="btn-tbl cancel" onclick="cancelEcoTrack('${o.id}')" title="إلغاء الشحنة من EcoTrack">إلغاء الشحنة</button><button class="btn-tbl confirm" onclick="validateEcoTrack('${o.id}')" title="ترحيل الشحنة">ترحيل</button><button class="btn-tbl" onclick="addEcoTrackNote('${o.id}')" title="إضافة ملاحظة">ملاحظة</button><button class="btn-tbl" onclick="downloadEcoTrackLabel('${o.id}')" title="تحميل الملصق PDF">PDF</button><button class="btn-tbl" onclick="showEcoTrackUpdates('${o.id}')" title="عرض تحديثات التتبع">تتبع</button><button class="btn-tbl cancel" onclick="requestEcoTrackReturn('${o.id}')" title="طلب إرجاع">إرجاع</button>` : (o.status === 'confirmed' ? `<button class="btn-tbl confirm" onclick="pushToEcoTrack('${o.id}')" title="رفع الطلب إلى EcoTrack">🚚 رفع للشحن</button>` : '')}
           <button class="btn-tbl delete" onclick="handleDeleteOrder('${o.id}')" title="حذف">🗑️</button>
         </div>
       </td>
@@ -576,6 +578,72 @@ window.pushToEcoTrack = async function(orderId) {
   } catch (err) { alert('فشل الاتصال بـ EcoTrack: ' + err.message); }
 };
 
+window.validateEcoTrack = async function(orderId) {
+  const pickup = confirm('هل تريد طلب استلام الطرد من EcoTrack؟\nاضغط إلغاء للترحيل بدون طلب استلام.');
+  try {
+    const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/ecotrack/validate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pickup }) });
+    const data = await res.json();
+    if (!data.success) return alert('فشل ترحيل الشحنة: ' + (data.error || 'خطأ غير معروف'));
+    alert('✓ تم ترحيل الشحنة إلى EcoTrack');
+    await loadOrders();
+  } catch (err) { alert('فشل الاتصال بـ EcoTrack: ' + err.message); }
+};
+
+window.updateEcoTrackOrder = async function(orderId) {
+  const order = currentOrders.find(item => String(item.id) === String(orderId));
+  if (!order) return;
+  const amount = prompt('المبلغ الإجمالي مع التوصيل (دج):', String(order.price || ''));
+  if (amount === null) return;
+  const address = prompt('عنوان التوصيل:', `${order.baladia || ''} - ${order.willaya || ''}`);
+  if (address === null) return;
+  try {
+    const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/ecotrack/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ montant: Math.max(0, Number(amount) || 0), adresse: address.trim() }) });
+    const data = await res.json();
+    if (!data.success) return alert('فشل تعديل الشحنة: ' + (data.error || 'خطأ غير معروف'));
+    alert('✓ تم تعديل الشحنة في EcoTrack');
+  } catch (err) { alert('فشل الاتصال بـ EcoTrack: ' + err.message); }
+};
+
+window.addEcoTrackNote = async function(orderId) {
+  const content = prompt('اكتب ملاحظة الشحنة:');
+  if (!content || !content.trim()) return;
+  try {
+    const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/ecotrack/note`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: content.trim() }) });
+    const data = await res.json();
+    if (!data.success) return alert('فشل إضافة الملاحظة: ' + (data.error || 'خطأ غير معروف'));
+    alert('✓ تمت إضافة الملاحظة');
+  } catch (err) { alert('فشل الاتصال بـ EcoTrack: ' + err.message); }
+};
+
+window.showEcoTrackUpdates = async function(orderId) {
+  try {
+    const [updatesRes, trackingRes] = await Promise.all([fetch(`/api/orders/${encodeURIComponent(orderId)}/ecotrack/updates`), fetch(`/api/orders/${encodeURIComponent(orderId)}/ecotrack/tracking`)]);
+    const updates = await updatesRes.json(); const tracking = await trackingRes.json();
+    if (!updates.success && !tracking.success) return alert(updates.error || tracking.error || 'تعذر جلب التتبع');
+    const items = Array.isArray(updates.updates) ? updates.updates : [];
+    const status = tracking.tracking?.status || tracking.tracking?.activity || '';
+    alert(`الحالة الحالية: ${status || 'غير متاحة'}\n\n${items.map(item => `${item.created_at || ''} — ${item.remarque || ''}`).join('\n') || 'لا توجد تحديثات مسجلة'}`);
+  } catch (err) { alert('فشل الاتصال بـ EcoTrack: ' + err.message); }
+};
+
+window.requestEcoTrackReturn = async function(orderId) {
+  if (!confirm('هل تريد طلب إرجاع هذه الشحنة من EcoTrack؟')) return;
+  try {
+    const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/ecotrack/return`, { method: 'POST' }); const data = await res.json();
+    if (!data.success) return alert('فشل طلب الإرجاع: ' + (data.error || 'خطأ غير معروف'));
+    alert('✓ تم إرسال طلب الإرجاع إلى EcoTrack'); await loadOrders();
+  } catch (err) { alert('فشل الاتصال بـ EcoTrack: ' + err.message); }
+};
+
+window.downloadEcoTrackLabel = async function(orderId) {
+  try {
+    const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/ecotrack/label`);
+    if (!res.ok) { const data = await res.json().catch(() => ({})); return alert(data.error || 'تعذر تحميل الملصق'); }
+    const blob = await res.blob(); const url = URL.createObjectURL(blob); const link = document.createElement('a');
+    link.href = url; link.download = `ecotrack-${orderId}.pdf`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (err) { alert('فشل تحميل الملصق: ' + err.message); }
+};
+
 window.cancelEcoTrack = async function(orderId) {
   if (!confirm('هل تريد إلغاء الشحنة من EcoTrack؟')) return;
   try {
@@ -608,6 +676,19 @@ window.bulkEcoTrackAction = async function(action) {
     if (!data.success) return alert(data.error || 'تعذر تنفيذ الإجراء');
     const count = action === 'push' ? (data.pushed || []).length : (data.cancelled || []).length;
     alert(`✓ تم تنفيذ الإجراء على ${count} طلب` + (data.failed?.length ? `، وفشل ${data.failed.length}` : ''));
+    await loadOrders();
+  } catch (err) { alert('فشل الاتصال بـ EcoTrack: ' + err.message); }
+};
+
+window.validateEcoTrackReturns = async function() {
+  const ids = Array.from(document.querySelectorAll('.order-check:checked')).map(cb => cb.value);
+  if (!ids.length) return alert('حدد الطلبات المرتجعة أولاً');
+  if (!confirm('هل تريد تأكيد استلام المرتجعات المحددة؟')) return;
+  try {
+    const res = await fetch('/api/orders/ecotrack/validate-returns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+    const data = await res.json();
+    if (!data.success) return alert(data.error || 'تعذر تأكيد المرتجعات');
+    alert(`✓ تم تأكيد استلام ${data.received?.length || 0} مرتجع`);
     await loadOrders();
   } catch (err) { alert('فشل الاتصال بـ EcoTrack: ' + err.message); }
 };
@@ -1038,10 +1119,19 @@ function initEventListeners() {
   const apiModal = document.getElementById("apiSettingsModal");
   const closeApiModal = document.getElementById("closeApiModal");
   const saveApiBtn = document.getElementById("saveApiSettingsBtn");
+  const validateEcoBtn = document.getElementById("validateEcoTrackBtn");
 
   if (openApiModalBtn && apiModal) openApiModalBtn.addEventListener("click", () => apiModal.classList.add("active"));
   if (closeApiModal && apiModal) closeApiModal.addEventListener("click", () => apiModal.classList.remove("active"));
   if (saveApiBtn) saveApiBtn.addEventListener("click", saveApiSettings);
+  if (validateEcoBtn) validateEcoBtn.addEventListener("click", async () => {
+    try {
+      const res = await fetch('/api/ecotrack/validate');
+      const data = await res.json();
+      if (!data.success) return alert('فشل التحقق: ' + (data.result?.message || data.error || 'توكن غير صالح'));
+      alert('✓ EcoTrack متصل بنجاح: ' + (data.result?.message || 'VALID_TOKEN'));
+    } catch (err) { alert('فشل الاتصال: ' + err.message); }
+  });
 }
 
 // ======================================================
@@ -1169,6 +1259,7 @@ async function loadApiSettings() {
     if (data.success && data.settings) {
       if (data.settings.pixel_id) document.getElementById("pixelIdInput").value = data.settings.pixel_id;
       if (data.settings.ecotrack_provider) document.getElementById("ecotrackProviderInput").value = data.settings.ecotrack_provider;
+      if (data.settings.ecotrack_url) document.getElementById("ecotrackUrlInput").value = data.settings.ecotrack_url;
       if (data.settings.ecotrack_token || data.settings.ecotrack_key) document.getElementById("ecotrackKeyInput").value = data.settings.ecotrack_token || data.settings.ecotrack_key;
       if (data.settings.ecotrack_store) document.getElementById("ecotrackStoreInput").value = data.settings.ecotrack_store;
     }
@@ -1182,6 +1273,7 @@ async function saveApiSettings() {
   const ecoKeyVal = document.getElementById("ecotrackKeyInput").value.trim();
   const ecoStoreVal = document.getElementById("ecotrackStoreInput").value.trim();
   const ecoProviderVal = document.getElementById("ecotrackProviderInput").value.trim().toLowerCase();
+  const ecoUrlVal = document.getElementById("ecotrackUrlInput").value.trim();
 
   try {
     const res = await fetch('/api/settings', {
@@ -1190,6 +1282,7 @@ async function saveApiSettings() {
       body: JSON.stringify({
         pixel_id: pixelVal,
         ecotrack_provider: ecoProviderVal,
+        ecotrack_url: ecoUrlVal,
         ecotrack_token: ecoKeyVal,
         ecotrack_store: ecoStoreVal,
       })

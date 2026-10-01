@@ -185,6 +185,7 @@
             <button class="bulk-btn red" onclick="bulkAction('cancelled')">✕ إلغاء</button>
             <button class="bulk-btn blue" onclick="bulkEcoTrackAction('push')">🚚 رفع المحدد</button>
             <button class="bulk-btn red" onclick="bulkEcoTrackAction('cancel')">↩ إلغاء الشحن</button>
+            <button class="bulk-btn" onclick="validateEcoTrackReturns()">↩ تأكيد استلام المرتجع</button>
           </div>
         </div>
       </div>
@@ -491,6 +492,10 @@
             <input type="text" id="ecotrackProviderInput" class="search-input" value="navexdelivery" dir="ltr">
           </div>
           <div style="margin-bottom:10px;">
+            <label>رابط API الأساسي (اختياري):</label>
+            <input type="url" id="ecotrackUrlInput" class="search-input" placeholder="https://provider.ecotrack.dz/api/v1" dir="ltr">
+          </div>
+          <div style="margin-bottom:10px;">
             <label>API Token (سري):</label>
             <input type="password" id="ecotrackKeyInput" class="search-input" placeholder="توكن إيكوتراك" dir="ltr">
           </div>
@@ -502,6 +507,7 @@
         </div>
       </div>
       <div class="admin-modal-footer">
+        <button type="button" class="btn-action" id="validateEcoTrackBtn">اختبار اتصال EcoTrack</button>
         <button type="button" class="btn-action dark" id="saveApiSettingsBtn">حفظ الإعدادات في Neon DB</button>
       </div>
     </div>
