@@ -177,7 +177,7 @@ function renderProductsGrid() {
           <div class="prod-actions">
             <a class="btn-tbl" href="${escapeHtml(productUrl)}" target="_blank" rel="noopener" title="فتح المنتج في المتجر">🔗 فتح الرابط</a>
             <button class="btn-tbl edit-btn" onclick="openEditProductModal(${Number(prod.id)})" title="تعديل المنتج">✏️ تعديل</button>
-            <button class="btn-tbl delete" onclick="handleDeleteProduct(${Number(prod.id)}, ${escapeHtml(JSON.stringify(prod.name || ''))})" title="حذف المنتج">🗑️</button>
+            <button type="button" class="btn-tbl delete" onclick="handleDeleteProduct(${Number(prod.id)})" title="حذف المنتج">🗑️</button>
           </div>
         </div>
       </div>
@@ -341,7 +341,8 @@ async function handlePhotoFilesUpload(files) {
   }
 }
 
-window.handleDeleteProduct = async function(productId, productName) {
+window.handleDeleteProduct = async function(productId) {
+  const productName = currentProducts.find(product => String(product.id) === String(productId))?.name || `رقم ${productId}`;
   if (confirm(`هل أنت متأكد من حذف المنتج "${productName}" نهائياً من قاعدة بيانات Neon؟`)) {
     try {
       const { data } = await fetchAdminJson(`/api/products/${encodeURIComponent(productId)}`, { method: 'DELETE' });
