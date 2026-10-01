@@ -145,6 +145,7 @@ function normalizeProductFeatures(features) {
 
 // Cache database initialization promise
 let dbInitPromise = null;
+let deliveryRatesCache = null;
 
 async function initDb() {
   if (!pool) {
@@ -348,6 +349,21 @@ async function initDb() {
     throw err;
   });
   return dbInitPromise;
+}
+
+async function getLiveDeliveryRates() {
+  await initDb();
+  const settings = await getEcoTrackSettings(pool);
+  const tokenHash = crypto.createHash('sha256').update(settings.token || '').digest('hex');
+  const cacheKey = `${settings.provider}:${settings.baseUrl}:${tokenHash}`;
+  if (deliveryRatesCache?.cacheKey === cacheKey && deliveryRatesCache.expiresAt > Date.now()) {
+    return { ...deliveryRatesCache.value, settings };
+  }
+
+  const fees = normalizeEcoTrackFees(await getEcoTrackFees(settings));
+  const value = { fees };
+  deliveryRatesCache = { cacheKey, expiresAt: Date.now() + 5 * 60 * 1000, value };
+  return { ...value, settings };
 }
 
 // Trigger initial DB setup
@@ -742,9 +758,30 @@ app.post('/api/orders', async (req, res) => {
       return res.status(400).json({ success: false, error: 'المنتج المطلوب غير صالح' });
     }
 
+    const isAdminOrder = hasValidAdminSession(req);
+    const normalizedDeliveryType = deliveryType === 'stop_desk' ? 'stop_desk' : 'home';
+    const normalizedWilayaId = Number(willayaId);
+    let finalDeliveryFee = parseStock(deliveryFee, 0);
+    if (!isAdminOrder) {
+      if (!Number.isInteger(normalizedWilayaId) || normalizedWilayaId < 1 || normalizedWilayaId > 58) {
+        return res.status(400).json({ success: false, error: 'يرجى اختيار ولاية صحيحة' });
+      }
+      try {
+        const { fees } = await getLiveDeliveryRates();
+        const wilayaFee = fees.find(item => item.wilayaId === normalizedWilayaId);
+        const authoritativeFee = wilayaFee?.[normalizedDeliveryType === 'stop_desk' ? 'stopDesk' : 'home'];
+        if (!Number.isFinite(authoritativeFee)) {
+          return res.status(422).json({ success: false, error: 'التوصيل غير متاح لهذه الولاية' });
+        }
+        finalDeliveryFee = authoritativeFee;
+      } catch (rateError) {
+        console.error('Could not verify delivery fee:', rateError);
+        return res.status(503).json({ success: false, error: 'تعذر تحميل تسعيرة التوصيل. يرجى المحاولة لاحقاً.' });
+      }
+    }
+
     client = await pool.connect();
     await client.query('BEGIN');
-    const isAdminOrder = hasValidAdminSession(req);
     const productResult = await client.query(
       'SELECT * FROM products WHERE id = $1 AND ($2::boolean OR is_active = true) FOR UPDATE',
       [numericProductId, isAdminOrder]
@@ -761,7 +798,6 @@ app.post('/api/orders', async (req, res) => {
 
     const tierPrice = Number(product[`price_${qty}`]);
     const finalPrice = isAdminOrder ? parseMoney(price, tierPrice) : tierPrice;
-    const finalDeliveryFee = parseStock(deliveryFee, 0);
     const orderId = `ORD-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
 
     const result = await client.query(`
@@ -777,13 +813,13 @@ app.post('/api/orders', async (req, res) => {
       cleanName,
       normalizedPhone,
       willaya ? willaya.trim() : 'غير محدد',
-      Number.isInteger(Number(willayaId)) ? Number(willayaId) : null,
+      Number.isInteger(normalizedWilayaId) && normalizedWilayaId >= 1 && normalizedWilayaId <= 58 ? normalizedWilayaId : null,
       baladia ? baladia.trim() : '',
       qty,
       finalPrice,
       finalDeliveryFee,
       String(note || '').slice(0, 2000),
-      deliveryType === 'stop_desk' ? 'stop_desk' : 'home'
+      normalizedDeliveryType
     ]);
 
     // If sessionToken was attached, mark corresponding lead as converted
@@ -917,7 +953,42 @@ app.get('/api/ecotrack/wilayas', async (req, res) => { try { await initDb(); con
 app.get('/api/ecotrack/communes/:wilayaId', async (req, res) => { try { await initDb(); const settings = await getEcoTrackSettings(pool); res.json({ success: true, communes: await getEcoTrackCommunes(req.params.wilayaId, settings) }); } catch (err) { ecoError(res, err); } });
 app.get('/api/ecotrack/desks', async (req, res) => { try { await initDb(); const settings = await getEcoTrackSettings(pool); res.json({ success: true, desks: await getEcoTrackDesks(settings) }); } catch (err) { ecoError(res, err); } });
 app.get('/api/ecotrack/fees', async (req, res) => { try { await initDb(); const settings = await getEcoTrackSettings(pool); res.json({ success: true, fees: await getEcoTrackFees(settings), provider: settings.provider }); } catch (err) { ecoError(res, err); } });
-app.get('/api/delivery-fees', async (req, res) => { try { await initDb(); const settings = await getEcoTrackSettings(pool); const fees = normalizeEcoTrackFees(await getEcoTrackFees(settings)); const byWilaya = Object.fromEntries(fees.map(fee => [fee.wilayaId, { home: fee.home, stopDesk: fee.stopDesk }])); res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=600'); res.json({ success: true, fees: byWilaya, provider: settings.provider }); } catch (err) { res.status(502).json({ success: false, error: err.message, fees: {} }); } });
+app.get('/api/shipping/wilayas', async (req, res) => {
+  try {
+    await initDb();
+    const settings = await getEcoTrackSettings(pool);
+    const wilayas = await getEcoTrackWilayas(settings);
+    res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
+    res.json({ success: true, wilayas, provider: settings.provider });
+  } catch (err) {
+    res.status(502).json({ success: false, error: err.message, wilayas: [] });
+  }
+});
+app.get('/api/shipping/wilayas/:wilayaId/communes', async (req, res) => {
+  try {
+    await initDb();
+    const wilayaId = Number(req.params.wilayaId);
+    if (!Number.isInteger(wilayaId) || wilayaId < 1 || wilayaId > 58) {
+      return res.status(400).json({ success: false, error: 'رقم الولاية غير صالح', communes: [] });
+    }
+    const settings = await getEcoTrackSettings(pool);
+    const communes = await getEcoTrackCommunes(wilayaId, settings);
+    res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
+    res.json({ success: true, communes, provider: settings.provider });
+  } catch (err) {
+    res.status(502).json({ success: false, error: err.message, communes: [] });
+  }
+});
+app.get('/api/delivery-fees', async (req, res) => {
+  try {
+    const { fees, settings } = await getLiveDeliveryRates();
+    const byWilaya = Object.fromEntries(fees.map(fee => [fee.wilayaId, { home: fee.home, stopDesk: fee.stopDesk }]));
+    res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
+    res.json({ success: true, fees: byWilaya, provider: settings.provider });
+  } catch (err) {
+    res.status(502).json({ success: false, error: err.message, fees: {} });
+  }
+});
 app.get('/api/ecotrack/products', async (req, res) => { try { await initDb(); const settings = await getEcoTrackSettings(pool); res.json({ success: true, products: await getEcoTrackProducts(settings), provider: settings.provider }); } catch (err) { ecoError(res, err); } });
 
 app.post('/api/orders/:id/ecotrack/push', async (req, res) => {

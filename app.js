@@ -9,6 +9,12 @@ let selectedQty = 2; // Default to 2 packs
 let sessionToken = null;
 let leadCaptureTimer = null;
 let deliveryFees = {};
+let shippingWilayas = WILAYAS_DATA;
+let deliveryProvider = '';
+let deliveryFeesReady = false;
+let deliveryFeesLoading = true;
+let communesRequestId = 0;
+const communesCache = new Map();
 let lastCapturedLeadPhone = '';
 let leadCaptureInFlight = false;
 
@@ -33,7 +39,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   initWilayaSelector();
   
   // Load product and live delivery data before initializing checkout controls.
-  await Promise.all([loadActiveProduct(), loadDeliveryFees()]);
+  await Promise.all([loadActiveProduct(), loadDeliveryFees(), loadShippingWilayas()]);
 
   // Initialize UI features
   initSlider();
@@ -68,12 +74,83 @@ async function loadDeliveryFees() {
   try {
     const response = await fetch('/api/delivery-fees');
     const data = await response.json();
-    if (data.success && data.fees && typeof data.fees === 'object') {
+    if (response.ok && data.success && data.fees && typeof data.fees === 'object') {
       deliveryFees = data.fees;
+      deliveryProvider = String(data.provider || '');
+      deliveryFeesReady = true;
     }
   } catch (err) {
     console.warn('Could not load live delivery fees:', err);
+  } finally {
+    deliveryFeesLoading = false;
+    updateTotalPrice();
   }
+}
+
+async function loadShippingWilayas() {
+  try {
+    const response = await fetch('/api/shipping/wilayas');
+    const data = await response.json();
+    if (!response.ok || !data.success || !Array.isArray(data.wilayas) || !data.wilayas.length) return;
+
+    shippingWilayas = data.wilayas.map(item => {
+      const id = Number(item.id);
+      const known = WILAYAS_DATA.find(wilaya => wilaya.id === id);
+      return { ...known, id, name: known?.name || item.name, baladias: known?.baladias || [] };
+    }).filter(item => Number.isInteger(item.id) && item.id >= 1 && item.id <= 58 && item.name);
+
+    const willayaSelect = document.getElementById('willayaSelect');
+    if (!willayaSelect) return;
+    const selectedId = willayaSelect.value;
+    willayaSelect.innerHTML = '<option value="">اختر الولاية</option>';
+    shippingWilayas.forEach(wilaya => {
+      const option = document.createElement('option');
+      option.value = wilaya.id;
+      option.textContent = wilaya.name;
+      willayaSelect.appendChild(option);
+    });
+    willayaSelect.value = selectedId;
+  } catch (err) {
+    console.warn('Could not load provider wilayas; using built-in list:', err);
+  }
+}
+
+async function loadShippingCommunes(wilayaId, requestId) {
+  const baladiaSelect = document.getElementById('baladiaSelect');
+  if (!baladiaSelect) return;
+  const staticCommunes = shippingWilayas.find(wilaya => wilaya.id === wilayaId)?.baladias || [];
+  baladiaSelect.disabled = true;
+  baladiaSelect.innerHTML = '<option value="">جار تحميل البلديات...</option>';
+
+  try {
+    let communes = communesCache.get(wilayaId);
+    if (!communes) {
+      const response = await fetch(`/api/shipping/wilayas/${wilayaId}/communes`);
+      const data = await response.json();
+      if (!response.ok || !data.success || !Array.isArray(data.communes)) {
+        throw new Error(data.error || 'تعذر تحميل البلديات');
+      }
+      communes = data.communes.map(item => String(item.name || '').trim()).filter(Boolean);
+      communesCache.set(wilayaId, communes);
+    }
+    if (requestId !== communesRequestId) return;
+    populateCommuneOptions(baladiaSelect, communes.length ? communes : staticCommunes);
+  } catch (err) {
+    if (requestId !== communesRequestId) return;
+    console.warn('Could not load provider communes; using built-in list:', err);
+    populateCommuneOptions(baladiaSelect, staticCommunes);
+  }
+}
+
+function populateCommuneOptions(select, communes) {
+  select.innerHTML = '<option value="">اختر البلدية</option>';
+  [...new Set(communes)].sort((a, b) => a.localeCompare(b, 'ar')).forEach(commune => {
+    const option = document.createElement('option');
+    option.value = commune;
+    option.textContent = commune;
+    select.appendChild(option);
+  });
+  select.disabled = communes.length === 0;
 }
 
 // ======================================================
@@ -246,7 +323,7 @@ function initWilayaSelector() {
 
   // Clear and populate 58 Wilayas
   willayaSelect.innerHTML = '<option value="">اختر الولاية</option>';
-  WILAYAS_DATA.forEach(w => {
+  shippingWilayas.forEach(w => {
     const opt = document.createElement("option");
     opt.value = w.id;
     opt.textContent = w.name;
@@ -256,6 +333,7 @@ function initWilayaSelector() {
   // Handle Wilaya change
   willayaSelect.addEventListener("change", () => {
     const selectedId = parseInt(willayaSelect.value, 10);
+    const requestId = ++communesRequestId;
     baladiaSelect.innerHTML = '<option value="">اختر البلدية</option>';
 
     if (!selectedId) {
@@ -265,16 +343,7 @@ function initWilayaSelector() {
       return;
     }
 
-    const wilayaObj = WILAYAS_DATA.find(w => w.id === selectedId);
-    if (wilayaObj && wilayaObj.baladias) {
-      wilayaObj.baladias.forEach(b => {
-        const opt = document.createElement("option");
-        opt.value = b;
-        opt.textContent = b;
-        baladiaSelect.appendChild(opt);
-      });
-      baladiaSelect.disabled = false;
-    }
+    loadShippingCommunes(selectedId, requestId);
     updateTotalPrice();
     triggerAutoLeadCapture();
   });
@@ -287,7 +356,9 @@ function getSelectedDeliveryFee() {
   const wilayaSelect = document.getElementById('willayaSelect');
   const wilayaId = wilayaSelect ? parseInt(wilayaSelect.value, 10) : 0;
   const fee = deliveryFees[wilayaId] || deliveryFees[String(wilayaId)];
-  return fee ? Number(fee.home || fee.tarif || fee.price || 0) : 0;
+  if (!wilayaId || !deliveryFeesReady || !fee) return null;
+  const value = Number(fee.home ?? fee.tarif ?? fee.price);
+  return Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 function updateTotalPrice() {
@@ -296,16 +367,19 @@ function updateTotalPrice() {
   const totalPriceDisplay = document.getElementById('totalPriceDisplay');
   const oldPriceDisplay = document.getElementById('oldPriceDisplay');
   const deliveryFeeDisplay = document.getElementById('deliveryFeeDisplay');
-  const total = offer.price + deliveryFee;
+  const total = offer.price + (deliveryFee ?? 0);
 
   if (totalPriceDisplay) totalPriceDisplay.textContent = `${total.toLocaleString('fr-FR')} ${APP_CONFIG.product.currency}`;
   if (oldPriceDisplay && offer.oldPrice) {
-    oldPriceDisplay.textContent = `${(offer.oldPrice + deliveryFee).toLocaleString('fr-FR')} ${APP_CONFIG.product.currency}`;
+    oldPriceDisplay.textContent = `${(offer.oldPrice + (deliveryFee ?? 0)).toLocaleString('fr-FR')} ${APP_CONFIG.product.currency}`;
   }
   if (deliveryFeeDisplay) {
-    deliveryFeeDisplay.textContent = deliveryFee > 0
-      ? `رسوم التوصيل: ${deliveryFee.toLocaleString('fr-FR')} ${APP_CONFIG.product.currency}`
-      : 'رسوم التوصيل: اختر الولاية';
+    const wilayaSelect = document.getElementById('willayaSelect');
+    if (!wilayaSelect?.value) deliveryFeeDisplay.textContent = 'رسوم التوصيل: اختر الولاية';
+    else if (deliveryFeesLoading) deliveryFeeDisplay.textContent = 'جار تحميل تسعيرة التوصيل...';
+    else if (!deliveryFeesReady) deliveryFeeDisplay.textContent = 'تعذر تحميل تسعيرة التوصيل';
+    else if (deliveryFee === null) deliveryFeeDisplay.textContent = 'التوصيل غير متوفر لهذه الولاية';
+    else deliveryFeeDisplay.textContent = `رسوم التوصيل${deliveryProvider ? ` (${deliveryProvider})` : ''}: ${deliveryFee.toLocaleString('fr-FR')} ${APP_CONFIG.product.currency}`;
   }
   return { productPrice: offer.price, deliveryFee, total };
 }
@@ -497,9 +571,13 @@ function initOrderForm() {
       return;
     }
 
-    const wilayaObj = WILAYAS_DATA.find(w => w.id === willayaId);
+    const wilayaObj = shippingWilayas.find(w => w.id === willayaId);
     const offer = APP_CONFIG.offers[selectedQty] || APP_CONFIG.offers[1];
     const pricing = updateTotalPrice();
+    if (pricing.deliveryFee === null) {
+      alert('تعذر تحميل تسعيرة التوصيل لهذه الولاية. يرجى المحاولة لاحقاً.');
+      return;
+    }
     const prodName = currentProduct ? currentProduct.name : APP_CONFIG.product.name;
     const prodId = currentProduct ? currentProduct.id : null;
 

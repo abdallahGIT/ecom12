@@ -35,6 +35,8 @@ ECOTRACK_PROVIDER=navexdelivery
 ECOTRACK_API_TOKEN=your-private-token
 ```
 
+For the 48HR service, set `ECOTRACK_PROVIDER` to the provider slug supplied for your account (for example, `48hr`) and add its private token in Vercel or the admin integration form. If the account uses a custom API host, set `ECOTRACK_API_URL` too. The storefront loads provider wilayas, communes, and `/get/fees` through server routes; confirmed customer orders have their delivery fee recalculated on the server. Without a configured provider token, delivery fees cannot load and customer checkout is held until pricing is available. Never put the token in frontend code or send it in chat.
+
 The admin dashboard supports token validation, official wilaya/commune/desk lookup, delivery fees, single and bulk shipment creation, editing before validation, shipment validation/pickup, cancellation, tracking history, shipment notes, return requests, returned-package receipt confirmation, PDF labels, status filtering, and synchronization. The customer browser never receives the courier token. Confirm an order first, then use **رفع للشحن**; after creation use **ترحيل** to call EcoTrack's `valid/order` endpoint.
 
 The implementation follows the official collection at `https://documenter.getpostman.com/view/14517169/Tz5je15g`, including the documented `/api/v1` paths, Bearer authorization, 40-item paginated order lists, 100-item bulk-create limit, and the documented rate limits (50/minute, 1,500/hour, 15,000/day). An optional `ECOTRACK_API_URL` or `ecotrack_url` setting can override the provider-derived base URL when EcoTrack gives the account a custom endpoint.
