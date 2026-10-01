@@ -128,6 +128,8 @@ body {
   touch-action: pan-y pinch-zoom;
 }
 
+.product-loading .slider-wrapper { visibility: hidden; }
+
 .slider-track {
   display: flex;
   width: 100%;

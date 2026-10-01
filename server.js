@@ -498,7 +498,7 @@ app.get('/api/products', async (req, res) => {
       ? 'SELECT * FROM products WHERE slug = $1 LIMIT 1;'
       : includeAll
         ? 'SELECT * FROM products ORDER BY id DESC;'
-        : 'SELECT * FROM products WHERE is_active = true ORDER BY id DESC;';
+        : 'SELECT * FROM products WHERE is_active = true ORDER BY id ASC;';
     const result = await pool.query(query, slug ? [slug] : []);
     res.json({ success: true, products: result.rows });
   } catch (err) {
