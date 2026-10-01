@@ -18,7 +18,11 @@ npm start
 
 ## Admin access
 
-The admin dashboard and management APIs are protected by an HttpOnly signed session cookie. The initial password is `ecom12`. For production, set `ADMIN_PASSWORD` in Vercel Environment Variables to a stronger private password; changing it invalidates existing sessions.
+The admin dashboard and management APIs are protected by an HttpOnly signed session cookie. Local development defaults to `ecom12`. In production, set `ADMIN_PASSWORD` in Vercel Environment Variables; the admin login stays disabled if it is missing. Changing the password invalidates existing sessions.
+
+Order prices are read from the active product in Neon, and saving an order, marking its lead converted, and reducing stock happen in one database transaction. Product schema setup is serialized across cold starts and can retry after a failed connection or migration.
+
+Seeded product images use WebP assets. Images uploaded from the admin are resized and compressed in the browser before they are stored; on Vercel their compressed data is stored in Neon because the function filesystem is temporary.
 
 The API requires `DATABASE_URL`. The application no longer contains a database credential fallback; without the variable, the storefront remains deployable but database-backed API requests return a clear configuration error.
 

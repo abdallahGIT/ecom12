@@ -11,6 +11,20 @@ let searchQuery = "";
 let leadsSearchQuery = "";
 let currentTableTab = "orders";
 let currentProductImages = []; // Array of image URLs for the modal
+let productsLoadError = "";
+let ordersLoadError = "";
+let leadsLoadError = "";
+
+async function fetchAdminJson(url, options) {
+  const res = await fetch(url, options);
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && data.loginRequired) {
+    window.location.replace('/admin');
+    throw new Error('انتهت جلسة الإدارة. يرجى تسجيل الدخول مجدداً.');
+  }
+  if (!res.ok) throw new Error(data.error || `خطأ من الخادم (${res.status})`);
+  return { res, data };
+}
 
 document.addEventListener("DOMContentLoaded", async () => {
   initEventListeners();
@@ -50,10 +64,10 @@ async function checkDbHealth() {
 
   if (badge) {
     badge.className = "db-status-badge offline";
-    badge.title = "غير متصل بقاعدة البيانات - يعمل بالذاكرة المحلية";
+    badge.title = "تعذر الاتصال بقاعدة بيانات Neon";
   }
   if (text) {
-    text.textContent = "🔴 السيرفر غير متصل (وضع محلي)";
+    text.textContent = "🔴 قاعدة البيانات غير متصلة؛ لا يمكن حفظ التغييرات حالياً";
   }
   return false;
 }
@@ -66,13 +80,17 @@ async function loadProducts() {
   const select = document.getElementById("newOrderProductSelect");
 
   try {
-    const res = await fetch('/api/products?all=true');
-    const data = await res.json();
+    const { data } = await fetchAdminJson('/api/products?all=true');
     if (data.success && Array.isArray(data.products)) {
       currentProducts = data.products;
+      productsLoadError = "";
+    } else {
+      throw new Error(data.error || 'استجابة المنتجات غير صالحة');
     }
   } catch (err) {
-    console.warn("Could not fetch products from DB:", err);
+    console.error("Could not fetch products from DB:", err);
+    currentProducts = [];
+    productsLoadError = err.message;
   }
 
   // Populate manual order product selector
@@ -97,7 +115,7 @@ function renderProductsGrid() {
   if (currentProducts.length === 0) {
     grid.innerHTML = `
       <div class="loading-placeholder">
-        لا توجد منتجات بذور مضافة حالياً. اضغط على "+ إضافة منتج بذور جديد" للبدء.
+        ${productsLoadError ? `تعذر تحميل المنتجات: ${escapeHtml(productsLoadError)}` : 'لا توجد منتجات بذور مضافة حالياً. اضغط على "+ إضافة منتج بذور جديد" للبدء.'}
       </div>
     `;
     return;
@@ -115,14 +133,14 @@ function renderProductsGrid() {
     } catch {
       images = [prod.images];
     }
-    const mainImg = (images && images.length > 0) ? images[0] : 'assets/slide-1.jpg';
+    const mainImg = (images && images.length > 0) ? images[0] : 'assets/slide-1.webp';
     const productUrl = prod.slug
       ? `${window.location.origin}/?p=${encodeURIComponent(prod.slug)}`
       : `${window.location.origin}/`;
 
     card.innerHTML = `
       <div class="product-card-top">
-        <img src="${escapeHtml(mainImg)}" alt="${escapeHtml(prod.name)}" onerror="this.src='assets/slide-1.jpg'">
+        <img src="${escapeHtml(mainImg)}" alt="${escapeHtml(prod.name)}" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='assets/slide-1.webp'">
         <span class="product-status-tag ${prod.is_active ? '' : 'inactive'}">
           ${prod.is_active ? 'معروض بالمتجر ✓' : 'غير معروض ✕'}
         </span>
@@ -203,7 +221,7 @@ function openNewProductModal() {
   if (editId) editId.value = "";
   if (title) title.textContent = "🌱 إضافة منتج بذور جديد";
   
-  currentProductImages = ['assets/slide-1.jpg', 'assets/slide-2.jpg', 'assets/slide-3.jpg'];
+  currentProductImages = ['assets/slide-1.webp', 'assets/slide-2.webp', 'assets/slide-3.webp'];
   renderImagePreviews();
 
   document.getElementById("prodPrice1").value = 2500;
@@ -258,7 +276,7 @@ function renderImagePreviews() {
     const box = document.createElement("div");
     box.className = "preview-thumb-box";
     box.innerHTML = `
-      <img src="${escapeHtml(imgUrl)}" alt="Preview" onerror="this.src='assets/slide-1.jpg'">
+      <img src="${escapeHtml(imgUrl)}" alt="Preview" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='assets/slide-1.webp'">
       <button type="button" class="preview-remove-btn" onclick="removeProductImage(${index})" title="حذف الصورة">✕</button>
     `;
     container.appendChild(box);
@@ -275,18 +293,36 @@ function readNumberInput(id, fallback, minimum = 0) {
   return Number.isFinite(value) && value >= minimum ? Math.floor(value) : fallback;
 }
 
+async function prepareImageForUpload(file) {
+  if (file.size <= 180 * 1024 || !/^image\/(jpeg|png|webp|avif)$/i.test(file.type)) return file;
+
+  const bitmap = await createImageBitmap(file);
+  const maxDimension = 1600;
+  const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('تعذر تجهيز الصورة للرفع');
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+
+  const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/webp', 0.82));
+  if (!blob) throw new Error('تعذر ضغط الصورة');
+  return new File([blob], `${file.name.replace(/\.[^.]+$/, '')}.webp`, { type: 'image/webp' });
+}
+
 async function handlePhotoFilesUpload(files) {
   if (!files || files.length === 0) return;
 
   const formData = new FormData();
-  for (let i = 0; i < files.length; i++) {
-    formData.append('photos', files[i]);
-  }
-
   const dropText = document.querySelector('.dropzone-text');
   if (dropText) dropText.textContent = "جاري رفع الصور إلى السيرفر...";
 
   try {
+    for (const file of Array.from(files).slice(0, 6)) {
+      formData.append('photos', await prepareImageForUpload(file));
+    }
     const res = await fetch('/api/upload', {
       method: 'POST',
       body: formData
@@ -328,9 +364,9 @@ window.handleDeleteProduct = async function(productId, productName) {
 // ======================================================
 async function loadOrders() {
   try {
-    const res = await fetch('/api/orders');
-    const data = await res.json();
+    const { data } = await fetchAdminJson('/api/orders');
     if (data.success && Array.isArray(data.orders)) {
+      ordersLoadError = "";
       currentOrders = data.orders.map(o => ({
         id: o.id,
         fullName: o.full_name,
@@ -349,11 +385,12 @@ async function loadOrders() {
         createdAt: o.created_at ? new Date(o.created_at).toLocaleString("fr-FR", { hour12: false }) : '-'
       }));
     } else {
-      currentOrders = OrderManager.getOrders();
+      throw new Error(data.error || 'استجابة الطلبات غير صالحة');
     }
   } catch (err) {
-    console.warn("Falling back to local orders:", err);
-    currentOrders = OrderManager.getOrders();
+    console.error("Could not fetch orders from DB:", err);
+    currentOrders = [];
+    ordersLoadError = err.message;
   }
 
   renderMetrics();
@@ -496,7 +533,7 @@ function renderOrdersTable() {
     tbody.innerHTML = `
       <tr>
         <td colspan="11" style="text-align: center; padding: 30px; color: #888;">
-          لا توجد طلبات مطابقة للبحث أو التصفية الحالية.
+          ${ordersLoadError ? `تعذر تحميل الطلبات: ${escapeHtml(ordersLoadError)}` : 'لا توجد طلبات مطابقة للبحث أو التصفية الحالية.'}
         </td>
       </tr>
     `;
@@ -556,16 +593,12 @@ window.handleStatusChange = async function(orderId, newStatus) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: newStatus })
     });
-    const data = await res.json();
-    if (!data.success) {
-      console.warn("Backend status update failed:", data.error);
-    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) throw new Error(data.error || 'تعذر تحديث حالة الطلب');
+    await loadOrders();
   } catch (err) {
-    console.warn("Backend status update offline:", err);
+    alert(err.message || 'تعذر الاتصال بالخادم. لم تتغير حالة الطلب.');
   }
-
-  OrderManager.updateStatus(orderId, newStatus);
-  await loadOrders();
 };
 
 window.pushToEcoTrack = async function(orderId) {
@@ -696,12 +729,13 @@ window.validateEcoTrackReturns = async function() {
 window.handleDeleteOrder = async function(orderId) {
   if (confirm(`هل أنت متأكد من حذف الطلب ${orderId} نهائياً؟`)) {
     try {
-      await fetch(`/api/orders/${encodeURIComponent(orderId)}`, { method: 'DELETE' });
+      const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) throw new Error(data.error || 'تعذر حذف الطلب');
+      await loadOrders();
     } catch (err) {
-      console.warn("Backend delete offline:", err);
+      alert(err.message || 'تعذر الاتصال بالخادم. لم يتم حذف الطلب.');
     }
-    OrderManager.deleteOrder(orderId);
-    await loadOrders();
   }
 };
 
@@ -720,15 +754,17 @@ window.bulkAction = async function(newStatus) {
 
   if (confirm(`هل تريد ${statusArabic} ${selected.length} طلب/طلبات محددة في قاعدة البيانات؟`)) {
     try {
-      await fetch('/api/orders/bulk-status', {
+      const res = await fetch('/api/orders/bulk-status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids: selected, status: newStatus })
       });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) throw new Error(data.error || 'تعذر تحديث الطلبات المحددة');
+      await loadOrders();
     } catch (err) {
-      console.warn("Bulk update offline:", err);
+      alert(err.message || 'تعذر الاتصال بالخادم. لم تتغير الطلبات.');
     }
-    await loadOrders();
   }
 };
 
@@ -737,9 +773,9 @@ window.bulkAction = async function(newStatus) {
 // ======================================================
 async function loadLeads() {
   try {
-    const res = await fetch('/api/leads');
-    const data = await res.json();
+    const { data } = await fetchAdminJson('/api/leads');
     if (data.success && Array.isArray(data.leads)) {
+      leadsLoadError = "";
       currentLeads = data.leads.map(l => ({
         id: l.id,
         sessionToken: l.session_token,
@@ -753,9 +789,13 @@ async function loadLeads() {
         status: l.status || 'abandoned',
         updatedAt: l.updated_at ? formatTimeAgo(new Date(l.updated_at)) : '-'
       }));
+    } else {
+      throw new Error(data.error || 'استجابة العملاء غير صالحة');
     }
   } catch (err) {
-    console.warn("Could not fetch leads from DB:", err);
+    console.error("Could not fetch leads from DB:", err);
+    currentLeads = [];
+    leadsLoadError = err.message;
   }
 
   renderMetrics();
@@ -786,7 +826,7 @@ function renderLeadsTable() {
     tbody.innerHTML = `
       <tr>
         <td colspan="9" style="text-align: center; padding: 30px; color: #888;">
-          لا توجد سلات مهجورة أو زبائن لم يؤكدوا حالياً.
+          ${leadsLoadError ? `تعذر تحميل العملاء: ${escapeHtml(leadsLoadError)}` : 'لا توجد سلات مهجورة أو زبائن لم يؤكدوا حالياً.'}
         </td>
       </tr>
     `;
@@ -1009,7 +1049,7 @@ function initEventListeners() {
         price_2,
         price_3,
         stock,
-        images: currentProductImages.length > 0 ? currentProductImages : ['assets/slide-1.jpg'],
+        images: currentProductImages.length > 0 ? currentProductImages : ['assets/slide-1.webp'],
         is_active
       };
 
@@ -1099,18 +1139,18 @@ function initEventListeners() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(orderPayload)
         });
-        const data = await res.json();
-        if (data.success) {
-          alert(`✓ تم حفظ الطلب برقم: ${data.order.id}`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success || !data.order?.id) {
+          throw new Error(data.error || 'تعذر حفظ الطلب');
         }
+        alert(`✓ تم حفظ الطلب برقم: ${data.order.id}`);
+        newOrderForm.reset();
+        addModal.classList.remove("active");
+        await loadOrders();
       } catch (err) {
-        console.warn("Manual order saved locally:", err);
-        OrderManager.addOrder({ ...orderPayload, status: "new" });
+        console.error("Manual order could not be saved:", err);
+        alert(err.message || 'تعذر الاتصال بالخادم. لم يتم حفظ الطلب.');
       }
-
-      newOrderForm.reset();
-      addModal.classList.remove("active");
-      await loadOrders();
     });
   }
 

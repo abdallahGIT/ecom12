@@ -32,7 +32,9 @@ const {
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'ecom12';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || (
+  process.env.NODE_ENV === 'production' || process.env.VERCEL ? '' : 'ecom12'
+);
 const ADMIN_SESSION_TTL = 7 * 24 * 60 * 60;
 
 function createAdminSession() {
@@ -43,6 +45,7 @@ function createAdminSession() {
 }
 
 function hasValidAdminSession(req) {
+  if (!ADMIN_PASSWORD) return false;
   const header = req.headers.cookie || '';
   const match = header.match(/(?:^|;\s*)ecom12_admin=([^;]+)/);
   if (!match) return false;
@@ -66,7 +69,8 @@ function isProtectedApi(req) {
   const pathName = req.path;
   if (pathName === '/api/upload') return true;
   if (pathName === '/api/settings' || pathName.startsWith('/api/ecotrack/')) return true;
-  if (pathName === '/api/products' || pathName.startsWith('/api/products/')) return req.method !== 'GET';
+  if (pathName === '/api/products') return req.method !== 'GET' || req.query.all === 'true';
+  if (pathName.startsWith('/api/products/')) return req.method !== 'GET';
   if (pathName === '/api/orders') return req.method === 'GET';
   if (pathName.startsWith('/api/orders/')) return true;
   if (pathName === '/api/leads') return req.method !== 'POST';
@@ -154,6 +158,9 @@ async function initDb() {
     try {
       client = await pool.connect();
       console.log('✅ Connected to Neon PostgreSQL database successfully.');
+      await client.query('BEGIN');
+      // Serialize cold-start migrations across local workers and Vercel instances.
+      await client.query('SELECT pg_advisory_xact_lock(1200123401);');
 
       // 1. Products table (Seed products catalog)
       await client.query(`
@@ -246,6 +253,23 @@ async function initDb() {
         );
       `);
 
+      // Move seeded product images to the smaller WebP assets without changing custom uploads.
+      await client.query(`
+        UPDATE products
+        SET images = replace(
+          replace(
+            replace(
+              replace(images::text, 'assets/slide-1.jpg', 'assets/slide-1.webp'),
+              'assets/slide-2.jpg', 'assets/slide-2.webp'
+            ),
+            'assets/slide-3.jpg', 'assets/slide-3.webp'
+          ),
+          'assets/lavender.png', 'assets/lavender.webp'
+        )::jsonb
+        WHERE images::text LIKE '%assets/slide-%.jpg%'
+           OR images::text LIKE '%assets/lavender.png%';
+      `);
+
       // Seed default product if table is empty
       const productCountRes = await client.query('SELECT COUNT(*) FROM products;');
       const count = parseInt(productCountRes.rows[0].count, 10);
@@ -268,9 +292,9 @@ async function initDb() {
           );
         `, [
           JSON.stringify([
-            'assets/slide-1.jpg',
-            'assets/slide-2.jpg',
-            'assets/slide-3.jpg'
+            'assets/slide-1.webp',
+            'assets/slide-2.webp',
+            'assets/slide-3.webp'
           ]),
           JSON.stringify([
             { icon: '🌿', label: 'طبيعية 100%' },
@@ -299,7 +323,7 @@ async function initDb() {
         )
         ON CONFLICT (slug) DO NOTHING;
       `, [
-        JSON.stringify(['assets/lavender.png']),
+        JSON.stringify(['assets/lavender.webp']),
         JSON.stringify([
           { icon: '💜', label: 'رائحة عطرية فاخرة' },
           { icon: '🌿', label: 'زراعة منزلية سهلة' },
@@ -307,14 +331,22 @@ async function initDb() {
         ])
       ]);
 
+      await client.query('COMMIT');
       console.log('✅ Database schema verified and ready.');
     } catch (err) {
-      console.error('⚠️ Database connection/initialization error:', err.message);
+      if (client) {
+        try { await client.query('ROLLBACK'); } catch {}
+      }
+      throw new Error(`Database initialization failed: ${err.message}`, { cause: err });
     } finally {
       if (client) client.release();
     }
   })();
 
+  dbInitPromise = dbInitPromise.catch(err => {
+    dbInitPromise = null;
+    throw err;
+  });
   return dbInitPromise;
 }
 
@@ -339,6 +371,9 @@ app.use((req, res, next) => {
 });
 
 app.post('/api/admin/login', (req, res) => {
+  if (!ADMIN_PASSWORD) {
+    return res.status(503).json({ success: false, error: 'يجب ضبط ADMIN_PASSWORD في إعدادات البيئة قبل تفعيل لوحة الإدارة' });
+  }
   const password = String(req.body?.password || '');
   if (password !== ADMIN_PASSWORD) {
     return res.status(401).json({ success: false, error: 'كلمة المرور غير صحيحة' });
@@ -518,7 +553,7 @@ app.post('/api/products', async (req, res) => {
     let imagesArr = normalizeProductImages(images);
 
     if (imagesArr.length === 0) {
-      imagesArr = ['assets/slide-1.jpg'];
+      imagesArr = ['assets/slide-1.webp'];
     }
 
     const normalizedFeatures = normalizeProductFeatures(features);
@@ -672,6 +707,7 @@ app.get('/api/orders', async (req, res) => {
 
 // POST create confirmed order
 app.post('/api/orders', async (req, res) => {
+  let client;
   try {
     await initDb();
     const {
@@ -691,16 +727,44 @@ app.post('/api/orders', async (req, res) => {
       willayaId
     } = req.body;
 
-    if (!fullName || !isValidAlgerianPhone(phone)) {
+    const cleanName = String(fullName || '').trim();
+    const normalizedPhone = normalizeAlgerianPhone(phone);
+    if (!cleanName || !isValidAlgerianPhone(normalizedPhone)) {
       return res.status(400).json({ success: false, error: 'يرجى إدخال اسم ورقم هاتف جزائري صحيح' });
     }
 
-    const orderId = id || `ORD-${Date.now().toString().slice(-4)}${Math.floor(Math.random() * 90 + 10)}`;
-    const qty = parseInt(quantity, 10) || 1;
-    const finalPrice = parseInt(price, 10) || 0;
-    const finalDeliveryFee = parseStock(deliveryFee, 0);
+    const qty = Number(quantity);
+    if (!Number.isInteger(qty) || qty < 1 || qty > 3) {
+      return res.status(400).json({ success: false, error: 'الكمية المطلوبة يجب أن تكون بين 1 و3 علب' });
+    }
+    const numericProductId = Number(productId);
+    if (!Number.isInteger(numericProductId) || numericProductId < 1) {
+      return res.status(400).json({ success: false, error: 'المنتج المطلوب غير صالح' });
+    }
 
-    const result = await pool.query(`
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const isAdminOrder = hasValidAdminSession(req);
+    const productResult = await client.query(
+      'SELECT * FROM products WHERE id = $1 AND ($2::boolean OR is_active = true) FOR UPDATE',
+      [numericProductId, isAdminOrder]
+    );
+    const product = productResult.rows[0];
+    if (!product) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, error: 'المنتج غير موجود أو غير متاح' });
+    }
+    if (product.stock < qty) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ success: false, error: 'الكمية المطلوبة غير متوفرة حالياً' });
+    }
+
+    const tierPrice = Number(product[`price_${qty}`]);
+    const finalPrice = isAdminOrder ? parseMoney(price, tierPrice) : tierPrice;
+    const finalDeliveryFee = parseStock(deliveryFee, 0);
+    const orderId = `ORD-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+
+    const result = await client.query(`
       INSERT INTO orders (
         id, product_id, product_name, full_name, phone,
         willaya, willaya_id, baladia, quantity, price, delivery_fee, status, note, delivery_type
@@ -708,79 +772,126 @@ app.post('/api/orders', async (req, res) => {
       RETURNING *;
     `, [
       orderId,
-      productId ? parseInt(productId, 10) : null,
-      productName || 'بذور الكاكي الفاخرة',
-      fullName.trim(),
-      normalizeAlgerianPhone(phone),
+      product.id,
+      product.name,
+      cleanName,
+      normalizedPhone,
       willaya ? willaya.trim() : 'غير محدد',
       Number.isInteger(Number(willayaId)) ? Number(willayaId) : null,
       baladia ? baladia.trim() : '',
       qty,
       finalPrice,
       finalDeliveryFee,
-      note || '',
+      String(note || '').slice(0, 2000),
       deliveryType === 'stop_desk' ? 'stop_desk' : 'home'
     ]);
 
     // If sessionToken was attached, mark corresponding lead as converted
     if (sessionToken) {
-      await pool.query(`
+      await client.query(`
         UPDATE leads SET status = 'converted', updated_at = CURRENT_TIMESTAMP
         WHERE session_token = $1 OR phone = $2;
-      `, [sessionToken, phone.trim()]);
+      `, [sessionToken, normalizedPhone]);
     }
 
-    // Deduct product stock
-    if (productId) {
-      await pool.query(`
-        UPDATE products SET stock = GREATEST(0, stock - $1) WHERE id = $2;
-      `, [qty, parseInt(productId, 10)]);
-    }
+    await client.query('UPDATE products SET stock = stock - $1 WHERE id = $2;', [qty, product.id]);
+    await client.query('COMMIT');
 
     res.json({ success: true, order: result.rows[0] });
   } catch (err) {
+    if (client) {
+      try { await client.query('ROLLBACK'); } catch {}
+    }
     console.error('Error placing order:', err);
     res.status(500).json({ success: false, error: err.message });
+  } finally {
+    if (client) client.release();
   }
 });
 
 // PATCH update single order status
+async function updateOrderStatusWithStock(client, order, status) {
+  const quantity = Number(order.quantity) || 1;
+  if (order.product_id && ['new', 'confirmed'].includes(order.status) && status === 'cancelled') {
+    await client.query('UPDATE products SET stock = stock + $1 WHERE id = $2;', [quantity, order.product_id]);
+  } else if (order.product_id && order.status === 'cancelled' && status !== 'cancelled') {
+    const reserved = await client.query(
+      'UPDATE products SET stock = stock - $1 WHERE id = $2 AND stock >= $1 RETURNING id;',
+      [quantity, order.product_id]
+    );
+    if (!reserved.rows[0]) {
+      const error = new Error('المخزون لا يكفي لإعادة تفعيل هذا الطلب');
+      error.status = 409;
+      throw error;
+    }
+  }
+
+  return client.query('UPDATE orders SET status = $1 WHERE id = $2 RETURNING *;', [status, order.id]);
+}
+
 app.patch('/api/orders/:id/status', async (req, res) => {
+  let client;
   try {
     await initDb();
     const { id } = req.params;
     const { status } = req.body;
+    if (!['new', 'confirmed', 'delivered', 'cancelled'].includes(status)) {
+      return res.status(400).json({ success: false, error: 'حالة الطلب غير صالحة' });
+    }
 
-    const result = await pool.query(`
-      UPDATE orders SET status = $1 WHERE id = $2 RETURNING *;
-    `, [status, id]);
-
-    if (result.rows.length === 0) {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const existing = await client.query('SELECT * FROM orders WHERE id = $1 FOR UPDATE;', [id]);
+    if (!existing.rows[0]) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ success: false, error: 'الطلب غير موجود' });
     }
+    const result = await updateOrderStatusWithStock(client, existing.rows[0], status);
+    await client.query('COMMIT');
 
     res.json({ success: true, order: result.rows[0] });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    if (client) {
+      try { await client.query('ROLLBACK'); } catch {}
+    }
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  } finally {
+    if (client) client.release();
   }
 });
 
 // POST bulk update order status
 app.post('/api/orders/bulk-status', async (req, res) => {
+  let client;
   try {
     await initDb();
     const { ids, status } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ success: false, error: 'لم يتم تحديد طلبات' });
     }
+    if (!['new', 'confirmed', 'delivered', 'cancelled'].includes(status)) {
+      return res.status(400).json({ success: false, error: 'حالة الطلب غير صالحة' });
+    }
 
-    await pool.query(`
-      UPDATE orders SET status = $1 WHERE id = ANY($2::text[]);
-    `, [status, ids]);
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const orders = await client.query(
+      'SELECT * FROM orders WHERE id = ANY($1::text[]) ORDER BY id FOR UPDATE;',
+      [ids]
+    );
+    for (const order of orders.rows) {
+      await updateOrderStatusWithStock(client, order, status);
+    }
+    await client.query('COMMIT');
 
-    res.json({ success: true, updatedCount: ids.length });
+    res.json({ success: true, updatedCount: orders.rowCount });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    if (client) {
+      try { await client.query('ROLLBACK'); } catch {}
+    }
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  } finally {
+    if (client) client.release();
   }
 });
 
@@ -838,13 +949,31 @@ app.get('/api/ecotrack/trackings', async (req, res) => { try { const trackings =
 app.post('/api/orders/ecotrack/sync', async (req, res) => { try { await initDb(); const settings = await getEcoTrackSettings(pool); const first = await listEcoTrackOrders(settings, 1, {}); const parcels = Array.isArray(first?.data) ? [...first.data] : []; const lastPage = Math.max(1, Number(first?.last_page || first?.meta?.last_page || 1)); for (let page = 2; page <= lastPage; page += 1) { const next = await listEcoTrackOrders(settings, page, {}); if (Array.isArray(next?.data)) parcels.push(...next.data); } let synced = 0; for (const parcel of parcels) { const tracking = String(parcel.tracking || parcel.tracking_number || ''); const reference = String(parcel.reference || ''); if (!tracking && !reference) continue; const match = tracking ? await pool.query('SELECT id FROM orders WHERE ecotrack_tracking = $1 OR id = $2 LIMIT 1', [tracking, reference]) : await pool.query('SELECT id FROM orders WHERE id = $1 LIMIT 1', [reference]); if (!match.rows[0]) continue; const normalized = normalizeEcoTrackStatus(parcel.status); const nextStatus = normalized === 'delivered' ? 'delivered' : ['returning', 'cancelled'].includes(normalized) ? 'cancelled' : null; await saveEcoOrder(match.rows[0].id, { ecotrack_tracking: tracking || undefined, ecotrack_status: String(parcel.status || ''), ecotrack_updated_at: new Date(), ecotrack_raw_response: JSON.stringify(parcel), ...(nextStatus ? { status: nextStatus } : {}) }); synced += 1; } res.json({ success: true, fetched: parcels.length, synced }); } catch (err) { ecoError(res, err); } });
 
 app.delete('/api/orders/:id', async (req, res) => {
+  let client;
   try {
     await initDb();
     const { id } = req.params;
-    await pool.query('DELETE FROM orders WHERE id = $1;', [id]);
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const existing = await client.query('SELECT * FROM orders WHERE id = $1 FOR UPDATE;', [id]);
+    if (!existing.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, error: 'الطلب غير موجود' });
+    }
+    const order = existing.rows[0];
+    if (order.product_id && ['new', 'confirmed'].includes(order.status)) {
+      await client.query('UPDATE products SET stock = stock + $1 WHERE id = $2;', [Number(order.quantity) || 1, order.product_id]);
+    }
+    await client.query('DELETE FROM orders WHERE id = $1;', [id]);
+    await client.query('COMMIT');
     res.json({ success: true, message: 'تم حذف الطلب بنجاح' });
   } catch (err) {
+    if (client) {
+      try { await client.query('ROLLBACK'); } catch {}
+    }
     res.status(500).json({ success: false, error: err.message });
+  } finally {
+    if (client) client.release();
   }
 });
 
@@ -907,8 +1036,8 @@ app.post('/api/leads', async (req, res) => {
       return res.status(422).json({ success: false, error: 'رقم الهاتف الجزائري غير صالح', validPhoneRequired: true });
     }
 
-    const token = sessionToken || `sess_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const leadId = `LEAD-${Date.now().toString().slice(-4)}${Math.floor(Math.random() * 90 + 10)}`;
+    const token = sessionToken || `sess_${crypto.randomUUID()}`;
+    const leadId = `LEAD-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
     const qty = parseInt(quantity, 10) || 1;
     const finalPrice = parseInt(price, 10) || 0;
     const finalDeliveryFee = parseStock(deliveryFee, 0);
@@ -980,22 +1109,55 @@ app.patch('/api/leads/:id/status', async (req, res) => {
 
 // POST convert lead to official confirmed order
 app.post('/api/leads/:id/convert', async (req, res) => {
+  let client;
   try {
     await initDb();
     const { id } = req.params;
-    const leadRes = await pool.query('SELECT * FROM leads WHERE id = $1;', [id]);
-    if (leadRes.rows.length === 0) {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const leadRes = await client.query('SELECT * FROM leads WHERE id = $1 FOR UPDATE;', [id]);
+    if (!leadRes.rows[0]) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ success: false, error: 'الزبون غير موجود' });
     }
 
     const lead = leadRes.rows[0];
-    const orderId = `ORD-${Date.now().toString().slice(-4)}${Math.floor(Math.random() * 90 + 10)}`;
+    if (lead.status === 'converted') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ success: false, error: 'تم تحويل هذا الزبون إلى طلب مسبقاً' });
+    }
+    if (!lead.product_id || !isValidAlgerianPhone(lead.phone)) {
+      await client.query('ROLLBACK');
+      return res.status(422).json({ success: false, error: 'بيانات الزبون أو المنتج غير مكتملة' });
+    }
+    const quantity = Number(lead.quantity);
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 3) {
+      await client.query('ROLLBACK');
+      return res.status(422).json({ success: false, error: 'كمية الزبون غير صالحة' });
+    }
+    const productResult = await client.query('SELECT id, price_1, price_2, price_3 FROM products WHERE id = $1 FOR UPDATE;', [lead.product_id]);
+    const product = productResult.rows[0];
+    if (!product) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, error: 'المنتج المرتبط بالزبون غير موجود' });
+    }
+    const officialPrice = Number(product[`price_${quantity}`]);
+    const stockResult = await client.query(
+      'UPDATE products SET stock = stock - $1 WHERE id = $2 AND stock >= $1 RETURNING id;',
+      [quantity, lead.product_id]
+    );
+    if (!stockResult.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ success: false, error: 'المخزون لا يكفي لتحويل هذا الزبون إلى طلب' });
+    }
 
-    const orderRes = await pool.query(`
+    const orderId = `ORD-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+
+    const orderRes = await client.query(`
       INSERT INTO orders (
         id, product_id, product_name, full_name, phone,
-        willaya, baladia, quantity, price, status, note
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'confirmed', $10)
+        willaya, willaya_id, baladia, quantity, price, delivery_fee, status, note
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'confirmed', $12)
       RETURNING *;
     `, [
       orderId,
@@ -1004,23 +1166,25 @@ app.post('/api/leads/:id/convert', async (req, res) => {
       lead.full_name || 'زبون تم الاتصال به',
       lead.phone,
       lead.willaya || 'غير محدد',
+      lead.willaya_id,
       lead.baladia || '',
-      lead.quantity || 1,
-      lead.price || 0,
+      quantity,
+      officialPrice,
+      lead.delivery_fee || 0,
       'تم تأكيد الطلب هاتفياً من السلة المهجورة'
     ]);
 
-    // Mark lead as converted
-    await pool.query("UPDATE leads SET status = 'converted', updated_at = CURRENT_TIMESTAMP WHERE id = $1;", [id]);
-
-    // Deduct stock if product ID exists
-    if (lead.product_id) {
-      await pool.query('UPDATE products SET stock = GREATEST(0, stock - $1) WHERE id = $2;', [lead.quantity || 1, lead.product_id]);
-    }
+    await client.query("UPDATE leads SET status = 'converted', updated_at = CURRENT_TIMESTAMP WHERE id = $1;", [id]);
+    await client.query('COMMIT');
 
     res.json({ success: true, order: orderRes.rows[0] });
   } catch (err) {
+    if (client) {
+      try { await client.query('ROLLBACK'); } catch {}
+    }
     res.status(500).json({ success: false, error: err.message });
+  } finally {
+    if (client) client.release();
   }
 });
 

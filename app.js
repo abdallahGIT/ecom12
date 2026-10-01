@@ -151,8 +151,8 @@ function applyProductToUI(product) {
       images.forEach((imgSrc, idx) => {
         const slide = document.createElement("div");
         slide.className = "slide";
-        const image = String(imgSrc || '').trim() || 'assets/slide-1.jpg';
-        slide.innerHTML = `<img src="${escapeAttribute(image)}" alt="${escapeAttribute(product.name)} - صورة ${idx + 1}" width="500" height="500" ${idx === 0 ? 'fetchpriority="high"' : 'loading="lazy"'} onerror="this.onerror=null;this.src='assets/slide-1.jpg'">`;
+        const image = String(imgSrc || '').trim() || 'assets/slide-1.webp';
+        slide.innerHTML = `<img src="${escapeAttribute(image)}" alt="${escapeAttribute(product.name)} - صورة ${idx + 1}" width="500" height="500" decoding="async" ${idx === 0 ? 'fetchpriority="high"' : 'loading="lazy"'} onerror="this.onerror=null;this.src='assets/slide-1.webp'">`;
         track.appendChild(slide);
 
         const dot = document.createElement("span");
@@ -391,7 +391,6 @@ async function triggerAutoLeadCapture() {
   const baladia = baladiaSelect ? baladiaSelect.value.trim() : "";
 
   if (!isValidAlgerianPhone(phone) || leadCaptureInFlight || phone === lastCapturedLeadPhone) return;
-  lastCapturedLeadPhone = phone;
   leadCaptureInFlight = true;
 
   const offer = APP_CONFIG.offers[selectedQty] || APP_CONFIG.offers[1];
@@ -425,14 +424,20 @@ async function triggerAutoLeadCapture() {
   });
 
   try {
-    await fetch('/api/leads', {
+    const response = await fetch('/api/leads', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) {
+      throw new Error(result.error || `تعذر حفظ بيانات الزبون (${response.status})`);
+    }
+    lastCapturedLeadPhone = phone;
     console.log("📡 [Lead Saver] Valid phone lead captured silently.");
   } catch (err) {
     console.warn("Could not sync draft lead to DB:", err);
+    lastCapturedLeadPhone = '';
   } finally {
     leadCaptureInFlight = false;
   }
@@ -514,26 +519,28 @@ function initOrderForm() {
       sessionToken
     };
 
-    // 1. Sync with PostgreSQL Backend API
+    // Confirm the order was committed before showing a success message.
     try {
       const resp = await fetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newOrder)
       });
-      const data = await resp.json();
-      if (data && data.success && data.order) {
-        newOrder.id = data.order.id;
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data.success || !data.order?.id) {
+        throw new Error(data.error || 'تعذر حفظ الطلب. يرجى المحاولة مرة أخرى.');
       }
+      newOrder.id = data.order.id;
     } catch (err) {
-      console.warn("API offline, fallback to local storage:", err);
+      console.error("Order could not be saved:", err);
+      submitBtn.disabled = false;
+      submitBtn.classList.remove("confirmed");
+      submitBtn.innerHTML = `<span>تأكيد الطلب الآن</span>`;
+      alert(err.message || 'تعذر الاتصال بالخادم. يرجى المحاولة مرة أخرى.');
+      return;
     }
 
-    // 2. Save locally in OrderManager
-    const savedOrder = OrderManager.addOrder(newOrder);
-    if (!newOrder.id) newOrder.id = savedOrder.id;
-
-    // 3. Fire Facebook Pixel Purchase Event
+    // Fire the purchase event only after the server confirms the saved order.
     APP_CONFIG.pixel.track("Purchase", {
       content_ids: [String(prodId || (currentProduct && (currentProduct.id || currentProduct.slug)) || 'storefront')],
       content_type: "product",
@@ -546,13 +553,13 @@ function initOrderForm() {
     // EcoTrack dispatch is intentionally server-side and is triggered from the admin dashboard.
     // This keeps the courier token out of the browser and lets staff verify each order first.
 
-    // 5. Update submit button to confirmed state
+    // Update submit button to confirmed state
     submitBtn.classList.add("confirmed");
     submitBtn.innerHTML = `<span>✓ تم استلام طلبك بنجاح!</span>`;
     submitBtn.disabled = true;
 
     // 6. Display Confirmation Modal
-    document.getElementById("modalOrderId").textContent = newOrder.id || savedOrder.id;
+    document.getElementById("modalOrderId").textContent = newOrder.id;
     document.getElementById("modalOrderDetails").textContent = 
       `${fullName} · ${wilayaObj ? wilayaObj.name : ''} (${baladia}) · ${selectedQty} علب · ${pricing.total} ${APP_CONFIG.product.currency}`;
 
