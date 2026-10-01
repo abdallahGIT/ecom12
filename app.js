@@ -9,6 +9,17 @@ let selectedQty = 2; // Default to 2 packs
 let sessionToken = null;
 let leadCaptureTimer = null;
 let deliveryFees = {};
+let lastCapturedLeadPhone = '';
+let leadCaptureInFlight = false;
+
+function isValidAlgerianPhone(value) {
+  const phone = String(value || '').replace(/[\s().-]/g, '');
+  return /^(?:\+213[5-7]\d{8}|0[5-7]\d{8})$/.test(phone);
+}
+
+function normalizeAlgerianPhone(value) {
+  return String(value || '').replace(/[\s().-]/g, '');
+}
 
 function escapeAttribute(value) {
   return String(value ?? '').replace(/[&<>"']/g, character => ({
@@ -343,10 +354,10 @@ function initAutoLeadCapture() {
   const willayaSelect = document.getElementById("willayaSelect");
   const baladiaSelect = document.getElementById("baladiaSelect");
 
-  // Debounced input capture
+  // Capture only after a complete, valid Algerian phone number is entered.
   const debouncedCapture = () => {
     clearTimeout(leadCaptureTimer);
-    leadCaptureTimer = setTimeout(triggerAutoLeadCapture, 600);
+    leadCaptureTimer = setTimeout(triggerAutoLeadCapture, 250);
   };
 
   if (phoneInput) {
@@ -371,7 +382,7 @@ async function triggerAutoLeadCapture() {
   const willayaSelect = document.getElementById("willayaSelect");
   const baladiaSelect = document.getElementById("baladiaSelect");
 
-  const phone = phoneInput ? phoneInput.value.trim() : "";
+  const phone = normalizeAlgerianPhone(phoneInput ? phoneInput.value : "");
   const fullName = fullNameInput ? fullNameInput.value.trim() : "";
   const willayaId = willayaSelect ? parseInt(willayaSelect.value, 10) : null;
   const willayaName = willayaSelect && willayaSelect.selectedIndex >= 0 
@@ -379,10 +390,9 @@ async function triggerAutoLeadCapture() {
     : "";
   const baladia = baladiaSelect ? baladiaSelect.value.trim() : "";
 
-  // Only capture if user has started typing phone (>= 6 digits) or full name
-  if (phone.length < 6 && fullName.length < 2) {
-    return;
-  }
+  if (!isValidAlgerianPhone(phone) || leadCaptureInFlight || phone === lastCapturedLeadPhone) return;
+  lastCapturedLeadPhone = phone;
+  leadCaptureInFlight = true;
 
   const offer = APP_CONFIG.offers[selectedQty] || APP_CONFIG.offers[1];
   const deliveryFee = getSelectedDeliveryFee();
@@ -403,16 +413,33 @@ async function triggerAutoLeadCapture() {
     productName: prodName
   };
 
+  // Meta receives the event, not the phone number. The phone stays in our protected database only.
+  APP_CONFIG.pixel.track("Lead", {
+    content_ids: [String(prodId || (currentProduct && (currentProduct.id || currentProduct.slug)) || 'storefront')],
+    content_type: "product",
+    content_name: prodName,
+    currency: "DZD",
+    value: pricingTotalForLead(offer.price, deliveryFee),
+    num_items: selectedQty,
+    lead_source: "valid_phone_input"
+  });
+
   try {
     await fetch('/api/leads', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    console.log("📡 [Lead Saver] Client draft info captured silently.");
+    console.log("📡 [Lead Saver] Valid phone lead captured silently.");
   } catch (err) {
     console.warn("Could not sync draft lead to DB:", err);
+  } finally {
+    leadCaptureInFlight = false;
   }
+}
+
+function pricingTotalForLead(productPrice, deliveryFee) {
+  return Math.round(Number(productPrice || 0) + Number(deliveryFee || 0));
 }
 
 // ======================================================
@@ -438,8 +465,8 @@ function initOrderForm() {
     const willayaId = parseInt(willayaSelect.value, 10);
     const baladia = baladiaSelect.value.trim();
 
-    if (!phone || phone.length < 9) {
-      alert("يرجى إدخال رقم هاتف صحيح (مثال: 0555123456)");
+    if (!isValidAlgerianPhone(phone)) {
+      alert("يرجى إدخال رقم جزائري صحيح: 05/06/07 + 8 أرقام أو +213 + 9 أرقام");
       phoneInput.focus();
       return;
     }

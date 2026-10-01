@@ -114,6 +114,14 @@ function parseStock(value, fallback) {
   return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : fallback;
 }
 
+function normalizeAlgerianPhone(value) {
+  return String(value || '').replace(/[\s().-]/g, '');
+}
+
+function isValidAlgerianPhone(value) {
+  return /^(?:\+213[5-7]\d{8}|0[5-7]\d{8})$/.test(normalizeAlgerianPhone(value));
+}
+
 function normalizeProductImages(images) {
   const source = Array.isArray(images) ? images : (typeof images === 'string' && images.trim() ? [images] : []);
   return source
@@ -683,8 +691,8 @@ app.post('/api/orders', async (req, res) => {
       willayaId
     } = req.body;
 
-    if (!fullName || !phone) {
-      return res.status(400).json({ success: false, error: 'يرجى إدخال الاسم ورقم الهاتف' });
+    if (!fullName || !isValidAlgerianPhone(phone)) {
+      return res.status(400).json({ success: false, error: 'يرجى إدخال اسم ورقم هاتف جزائري صحيح' });
     }
 
     const orderId = id || `ORD-${Date.now().toString().slice(-4)}${Math.floor(Math.random() * 90 + 10)}`;
@@ -703,7 +711,7 @@ app.post('/api/orders', async (req, res) => {
       productId ? parseInt(productId, 10) : null,
       productName || 'بذور الكاكي الفاخرة',
       fullName.trim(),
-      phone.trim(),
+      normalizeAlgerianPhone(phone),
       willaya ? willaya.trim() : 'غير محدد',
       Number.isInteger(Number(willayaId)) ? Number(willayaId) : null,
       baladia ? baladia.trim() : '',
@@ -894,9 +902,9 @@ app.post('/api/leads', async (req, res) => {
       productName
     } = req.body;
 
-    // Ignore if phone or name is empty
-    if ((!phone || phone.trim().length < 6) && (!fullName || fullName.trim().length < 2)) {
-      return res.json({ success: false, message: 'معلومات غير كافية للحفظ' });
+    const normalizedPhone = normalizeAlgerianPhone(phone);
+    if (!isValidAlgerianPhone(normalizedPhone)) {
+      return res.status(422).json({ success: false, error: 'رقم الهاتف الجزائري غير صالح', validPhoneRequired: true });
     }
 
     const token = sessionToken || `sess_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -932,7 +940,7 @@ app.post('/api/leads', async (req, res) => {
       productId ? parseInt(productId, 10) : null,
       productName || 'بذور الكاكي الفاخرة',
       fullName ? fullName.trim() : '',
-      phone ? phone.trim() : '',
+      normalizedPhone,
       willaya ? willaya.trim() : '',
       willayaId ? parseInt(willayaId, 10) : null,
       baladia ? baladia.trim() : '',
@@ -1097,6 +1105,8 @@ module.exports.productUtils = {
   normalizeProductSlug,
   parseMoney,
   parseStock,
+  normalizeAlgerianPhone,
+  isValidAlgerianPhone,
   normalizeProductImages,
   normalizeProductFeatures
 };

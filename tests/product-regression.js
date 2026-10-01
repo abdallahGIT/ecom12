@@ -8,6 +8,12 @@ assert.match(utils.normalizeProductSlug('!!!'), /^seed-/);
 assert.equal(utils.parseStock(0, 50), 0);
 assert.equal(utils.parseStock('12.8', 50), 12);
 assert.equal(utils.parseMoney(0, 2500), 0);
+assert.equal(utils.isValidAlgerianPhone('0555123456'), true);
+assert.equal(utils.isValidAlgerianPhone('+213555123456'), true);
+assert.equal(utils.isValidAlgerianPhone('06 55 12 34 56'), true);
+assert.equal(utils.isValidAlgerianPhone('055512345'), false);
+assert.equal(utils.isValidAlgerianPhone('0155123456'), false);
+assert.equal(utils.normalizeAlgerianPhone('+213 555 123 456'), '+213555123456');
 assert.deepEqual(
   utils.normalizeProductImages([' /uploads/a.jpg ', '', null, 'https://x/y.jpg']),
   ['/uploads/a.jpg', 'https://x/y.jpg']
