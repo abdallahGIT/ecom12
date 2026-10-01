@@ -84,12 +84,15 @@ async function loadActiveProduct() {
     // Check if a specific product slug is in URL query (?p=slug)
     const urlParams = new URLSearchParams(window.location.search);
     const slugParam = urlParams.get('p');
+    // The static homepage is the Kaki storefront; don't replace it moments later
+    // with whichever product happens to have the newest database ID.
+    const productSlug = slugParam || 'kaki';
 
-    const res = await fetch(slugParam ? `/api/products?slug=${encodeURIComponent(slugParam)}` : '/api/products');
+    const res = await fetch(`/api/products?slug=${encodeURIComponent(productSlug)}`);
     const data = await res.json();
 
     if (data.success && Array.isArray(data.products) && data.products.length > 0) {
-      currentProduct = data.products.find(p => !slugParam || p.slug === slugParam) || data.products[0];
+      currentProduct = data.products.find(p => p.slug === productSlug) || data.products[0];
 
       if (currentProduct) {
         applyProductToUI(currentProduct);
