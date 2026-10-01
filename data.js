@@ -37,10 +37,10 @@ const APP_CONFIG = {
     }
   },
 
-  // Facebook Pixel Slot
+  // One Meta Pixel for the entire storefront; products are distinguished by content_ids.
   pixel: {
     enabled: true,
-    pixelId: "YOUR_PIXEL_ID_HERE", // ضع معرف بكسل فيسبوك هنا
+    pixelId: "1808629570178310",
     init() {
       if (!this.pixelId || this.pixelId === "YOUR_PIXEL_ID_HERE") {
         console.log("ℹ️ [Facebook Pixel] Slot ready. Insert your Pixel ID in data.js or Admin settings.");

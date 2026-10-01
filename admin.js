@@ -210,7 +210,6 @@ function openNewProductModal() {
   document.getElementById("prodPrice2").value = 4200;
   document.getElementById("prodPrice3").value = 5600;
   document.getElementById("prodStock").value = 50;
-  document.getElementById("prodPixelId").value = "";
   document.getElementById("prodIsActive").checked = true;
 
   modal.classList.add("active");
@@ -237,7 +236,6 @@ window.openEditProductModal = function(productId) {
   document.getElementById("prodPrice2").value = prod.price_2 || 4200;
   document.getElementById("prodPrice3").value = prod.price_3 || 5600;
   document.getElementById("prodStock").value = prod.stock !== undefined ? prod.stock : 50;
-  document.getElementById("prodPixelId").value = prod.pixel_id || "";
   document.getElementById("prodIsActive").checked = Boolean(prod.is_active);
 
   try {
@@ -910,7 +908,6 @@ function initEventListeners() {
       const price_2 = readNumberInput("prodPrice2", 4200);
       const price_3 = readNumberInput("prodPrice3", 5600);
       const stock = readNumberInput("prodStock", 50);
-      const pixelId = document.getElementById("prodPixelId").value.trim().replace(/\D/g, "");
       const is_active = document.getElementById("prodIsActive").checked;
 
       if (!name) {
@@ -931,7 +928,6 @@ function initEventListeners() {
         price_2,
         price_3,
         stock,
-        pixelId,
         images: currentProductImages.length > 0 ? currentProductImages : ['assets/slide-1.jpg'],
         is_active
       };

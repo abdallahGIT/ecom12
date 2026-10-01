@@ -32,7 +32,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // Initialize Facebook Pixel if configured
   APP_CONFIG.pixel.init();
+  const trackingProductId = currentProduct ? String(currentProduct.id || currentProduct.slug) : 'storefront';
   APP_CONFIG.pixel.track("ViewContent", {
+    content_ids: [trackingProductId],
+    content_type: "product",
     content_name: currentProduct ? currentProduct.name : APP_CONFIG.product.name,
     currency: "DZD",
     value: APP_CONFIG.offers[1].price
@@ -87,11 +90,6 @@ async function loadActiveProduct() {
 }
 
 function applyProductToUI(product) {
-  // Each landing-page slug can carry its own Pixel; it is initialized after this function runs.
-  if (product.pixel_id) {
-    APP_CONFIG.pixel.pixelId = String(product.pixel_id).trim();
-  }
-
   // Update Product Name
   const heroTitle = document.querySelector(".hero-title");
   if (heroTitle && product.name) heroTitle.textContent = product.name;
@@ -510,6 +508,8 @@ function initOrderForm() {
 
     // 3. Fire Facebook Pixel Purchase Event
     APP_CONFIG.pixel.track("Purchase", {
+      content_ids: [String(prodId || (currentProduct && (currentProduct.id || currentProduct.slug)) || 'storefront')],
+      content_type: "product",
       content_name: prodName,
       currency: "DZD",
       value: pricing.total,
