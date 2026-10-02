@@ -20,6 +20,7 @@ let queuedLeadPayload = null;
 const pixelLeadPhones = new Set();
 let leadCaptureInFlight = false;
 let pixelInitiateCheckoutSent = false;
+let pixelPurchaseSent = false;
 let pixelReady = false;
 let pixelInitializationFinished = false;
 const pendingPixelEvents = [];
@@ -107,6 +108,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   initializePixel();
   initPixelLeadTracking();
   initPixelInitiateCheckout();
+  initPixelPurchaseTracking();
   initAutoLeadCapture();
   
   // Load product and live delivery data before initializing checkout controls.
@@ -597,10 +599,8 @@ async function triggerAutoLeadCapture() {
 }
 
 function initPixelInitiateCheckout() {
-  const fields = ['fullName', 'phone', 'willayaSelect', 'baladiaSelect']
-    .map(id => document.getElementById(id))
-    .filter(Boolean);
-  if (!fields.length) return;
+  const form = document.getElementById('kakiOrderForm');
+  if (!form) return;
 
   const trackInitiateCheckout = () => {
     if (pixelInitiateCheckoutSent) return;
@@ -615,15 +615,35 @@ function initPixelInitiateCheckout() {
     });
   };
 
-  fields.forEach(field => {
-    field.addEventListener('focus', trackInitiateCheckout);
-    field.addEventListener('input', trackInitiateCheckout);
-    field.addEventListener('change', trackInitiateCheckout);
+  // Treat the first interaction anywhere inside the order form as checkout start.
+  ['pointerdown', 'focusin', 'input', 'change'].forEach(eventName => {
+    form.addEventListener(eventName, trackInitiateCheckout);
   });
 
   window.addEventListener('pageshow', () => {
-    if (fields.some(field => String(field.value || '').trim())) trackInitiateCheckout();
+    const customerFields = ['fullName', 'phone', 'willayaSelect', 'baladiaSelect']
+      .map(id => document.getElementById(id))
+      .filter(Boolean);
+    if (customerFields.some(field => String(field.value || '').trim())) trackInitiateCheckout();
   }, { once: true });
+}
+
+function initPixelPurchaseTracking() {
+  const submitButton = document.getElementById('submitOrderBtn');
+  if (!submitButton) return;
+
+  submitButton.addEventListener('click', () => {
+    if (pixelPurchaseSent) return;
+    pixelPurchaseSent = true;
+
+    const productName = currentProduct ? currentProduct.name : APP_CONFIG.product.name;
+    trackPixelEvent('Purchase', {
+      content_ids: [getPixelContentId()],
+      content_type: 'product',
+      content_name: productName,
+      num_items: selectedQty
+    });
+  });
 }
 
 function initPixelLeadTracking() {
@@ -724,14 +744,6 @@ function initOrderForm() {
       productName: prodName,
       sessionToken
     };
-
-    // Purchase is a click-conversion event: track it independently before any server request.
-    trackPixelEvent('Purchase', {
-      content_ids: [getPixelContentId()],
-      content_type: 'product',
-      content_name: prodName,
-      num_items: selectedQty
-    });
 
     // Confirm the order was committed before showing a success message.
     try {
