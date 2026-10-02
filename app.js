@@ -53,6 +53,12 @@ async function initializePixel() {
         const { eventName, params } = pendingPixelEvents.shift();
         trackPixelEvent(eventName, params);
       }
+      const requestedProductSlug = new URLSearchParams(window.location.search).get('p');
+      trackPixelEvent('ViewContent', {
+        content_ids: [requestedProductSlug || 'storefront'],
+        content_type: 'product',
+        content_name: requestedProductSlug || APP_CONFIG.product.name
+      });
     } else {
       pendingPixelEvents.length = 0;
       console.warn('Meta Pixel events are not being sent because the Meta library did not load.');
@@ -76,7 +82,7 @@ function trackPixelEvent(eventName, params) {
 
 function getPixelContentId() {
   const requestedProductSlug = new URLSearchParams(window.location.search).get('p');
-  return String((currentProduct && (currentProduct.id || currentProduct.slug)) || requestedProductSlug || 'storefront');
+  return String(requestedProductSlug || (currentProduct && (currentProduct.id || currentProduct.slug)) || 'storefront');
 }
 
 function isValidAlgerianPhone(value) {
@@ -231,13 +237,6 @@ async function loadActiveProduct() {
   } catch (err) {
     console.warn("Could not fetch active product from DB, using fallback config:", err);
   } finally {
-    const requestedProductSlug = new URLSearchParams(window.location.search).get('p');
-    trackPixelEvent('ViewContent', {
-      content_ids: [getPixelContentId()],
-      content_type: 'product',
-      content_name: currentProduct ? currentProduct.name : (requestedProductSlug || APP_CONFIG.product.name),
-      currency: 'DZD'
-    });
     document.body.classList.remove('product-loading');
   }
 }
