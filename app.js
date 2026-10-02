@@ -19,16 +19,45 @@ let lastSavedLeadSignature = '';
 let queuedLeadPayload = null;
 const pixelLeadPhones = new Set();
 let leadCaptureInFlight = false;
+let pixelReady = false;
+const pendingPixelEvents = [];
 
-function initializePixel() {
+async function initializePixel() {
   try {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5000);
+    try {
+      const response = await fetch('/api/public-settings', {
+        cache: 'no-store',
+        signal: controller.signal
+      });
+      const data = await response.json();
+      if (response.ok && data.success && typeof data.settings?.pixel_id === 'string') {
+        APP_CONFIG.pixel.pixelId = data.settings.pixel_id.trim();
+      }
+    } catch (err) {
+      console.warn('Could not load the saved Pixel ID; using the configured fallback:', err);
+    } finally {
+      window.clearTimeout(timeout);
+    }
+
     APP_CONFIG.pixel.init();
   } catch (err) {
     console.warn('Could not initialize Meta Pixel:', err);
+  } finally {
+    pixelReady = true;
+    while (pendingPixelEvents.length) {
+      const { eventName, params } = pendingPixelEvents.shift();
+      trackPixelEvent(eventName, params);
+    }
   }
 }
 
 function trackPixelEvent(eventName, params) {
+  if (!pixelReady) {
+    pendingPixelEvents.push({ eventName, params });
+    return;
+  }
   try {
     APP_CONFIG.pixel.track(eventName, params);
   } catch (err) {

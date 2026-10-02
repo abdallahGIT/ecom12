@@ -1352,6 +1352,20 @@ app.delete('/api/leads/:id', async (req, res) => {
 // ------------------------------------------
 // 5. SETTINGS API
 // ------------------------------------------
+app.get('/api/public-settings', async (req, res) => {
+  try {
+    await initDb();
+    const result = await pool.query("SELECT value FROM settings WHERE key = 'pixel_id' LIMIT 1;");
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      success: true,
+      settings: { pixel_id: result.rows[0] ? String(result.rows[0].value || '') : null }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.get('/api/settings', async (req, res) => {
   try {
     await initDb();

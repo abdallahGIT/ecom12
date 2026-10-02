@@ -41,10 +41,13 @@ const APP_CONFIG = {
   pixel: {
     enabled: true,
     pixelId: "1808629570178310",
+    initialized: false,
     init() {
-      if (!this.pixelId || this.pixelId === "YOUR_PIXEL_ID_HERE") {
+      if (this.initialized) return true;
+      if (!this.enabled || !this.pixelId || this.pixelId === "YOUR_PIXEL_ID_HERE") {
         console.log("ℹ️ [Facebook Pixel] Slot ready. Insert your Pixel ID in data.js or Admin settings.");
-        return;
+        this.initialized = true;
+        return false;
       }
       !function(f,b,e,v,n,t,s)
       {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
@@ -56,13 +59,18 @@ const APP_CONFIG = {
       'https://connect.facebook.net/en_US/fbevents.js');
       fbq('init', this.pixelId);
       fbq('track', 'PageView');
+      this.initialized = true;
+      return true;
     },
     track(eventName, params = {}) {
+      if (!this.enabled || !this.pixelId || this.pixelId === "YOUR_PIXEL_ID_HERE") return false;
       if (typeof fbq === 'function') {
         fbq('track', eventName, params);
         console.log(`📡 [Pixel Event] ${eventName}:`, params);
+        return true;
       } else {
         console.log(`📡 [Mock Pixel Event] ${eventName}:`, params);
+        return false;
       }
     }
   },
