@@ -20,6 +20,23 @@ let queuedLeadPayload = null;
 const pixelLeadPhones = new Set();
 let leadCaptureInFlight = false;
 
+function initializePixel() {
+  try {
+    APP_CONFIG.pixel.init();
+  } catch (err) {
+    console.warn('Could not initialize Meta Pixel:', err);
+  }
+}
+
+function trackPixelEvent(eventName, params) {
+  try {
+    APP_CONFIG.pixel.track(eventName, params);
+  } catch (err) {
+    // Pixel failures must never interrupt checkout or lead persistence.
+    console.warn(`Could not send Meta Pixel ${eventName} event:`, err);
+  }
+}
+
 function isValidAlgerianPhone(value) {
   const phone = String(value || '').replace(/[\s().-]/g, '');
   return /^(?:\+213[5-7]\d{8}|0[5-7]\d{8})$/.test(phone);
@@ -39,7 +56,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   initSessionToken();
   initSmoothScroll();
   initWilayaSelector();
-  APP_CONFIG.pixel.init();
+  initializePixel();
+  initPixelLeadTracking();
   initAutoLeadCapture();
   
   // Load product and live delivery data before initializing checkout controls.
@@ -53,7 +71,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // Initialize Facebook Pixel if configured
   const trackingProductId = currentProduct ? String(currentProduct.id || currentProduct.slug) : 'storefront';
-  APP_CONFIG.pixel.track("ViewContent", {
+  trackPixelEvent("ViewContent", {
     content_ids: [trackingProductId],
     content_type: "product",
     content_name: currentProduct ? currentProduct.name : APP_CONFIG.product.name,
@@ -497,20 +515,6 @@ async function triggerAutoLeadCapture() {
     productName: prodName
   };
 
-  // Meta receives the event, never the phone number. Fire once per valid phone in this session.
-  if (!pixelLeadPhones.has(phone)) {
-    pixelLeadPhones.add(phone);
-    APP_CONFIG.pixel.track("Lead", {
-      content_ids: [String(prodId || (currentProduct && (currentProduct.id || currentProduct.slug)) || 'storefront')],
-      content_type: "product",
-      content_name: prodName,
-      currency: "DZD",
-      value: pricingTotalForLead(offer.price, deliveryFee),
-      num_items: selectedQty,
-      lead_source: "valid_phone_input"
-    });
-  }
-
   const signature = JSON.stringify(payload);
   if (signature === lastSavedLeadSignature) return;
   if (leadCaptureInFlight) {
@@ -554,6 +558,38 @@ async function triggerAutoLeadCapture() {
 
 function pricingTotalForLead(productPrice, deliveryFee) {
   return Math.round(Number(productPrice || 0) + Number(deliveryFee || 0));
+}
+
+function initPixelLeadTracking() {
+  const phoneInput = document.getElementById('phone');
+  if (!phoneInput) return;
+
+  const captureLeadPixel = () => {
+    const phone = normalizeAlgerianPhone(phoneInput.value);
+    if (!isValidAlgerianPhone(phone) || pixelLeadPhones.has(phone)) return;
+    pixelLeadPhones.add(phone);
+
+    const offer = APP_CONFIG.offers[selectedQty] || APP_CONFIG.offers[1];
+    const deliveryFee = getSelectedDeliveryFee();
+    const productName = currentProduct ? currentProduct.name : APP_CONFIG.product.name;
+    const productId = currentProduct ? currentProduct.id : null;
+    trackPixelEvent('Lead', {
+      content_ids: [String(productId || (currentProduct && (currentProduct.id || currentProduct.slug)) || 'storefront')],
+      content_type: 'product',
+      content_name: productName,
+      currency: 'DZD',
+      value: pricingTotalForLead(offer.price, deliveryFee),
+      num_items: selectedQty,
+      lead_source: 'valid_phone_input'
+    });
+  };
+
+  phoneInput.addEventListener('input', captureLeadPixel);
+  phoneInput.addEventListener('change', captureLeadPixel);
+  phoneInput.addEventListener('blur', captureLeadPixel);
+  phoneInput.addEventListener('focus', () => setTimeout(captureLeadPixel, 0));
+  window.addEventListener('pageshow', captureLeadPixel);
+  captureLeadPixel();
 }
 
 // ======================================================
@@ -628,6 +664,16 @@ function initOrderForm() {
       sessionToken
     };
 
+    // Purchase is a click-conversion event: track it independently before any server request.
+    trackPixelEvent('Purchase', {
+      content_ids: [String(prodId || (currentProduct && (currentProduct.id || currentProduct.slug)) || 'storefront')],
+      content_type: 'product',
+      content_name: prodName,
+      currency: 'DZD',
+      value: pricing.deliveryFee === null ? offer.price : pricing.total,
+      num_items: selectedQty
+    });
+
     // Confirm the order was committed before showing a success message.
     try {
       const resp = await fetch('/api/orders', {
@@ -649,16 +695,6 @@ function initOrderForm() {
       alert(err.message || 'تعذر الاتصال بالخادم. يرجى المحاولة مرة أخرى.');
       return;
     }
-
-    // Fire the purchase event only after the server confirms the saved order.
-    APP_CONFIG.pixel.track("Purchase", {
-      content_ids: [String(prodId || (currentProduct && (currentProduct.id || currentProduct.slug)) || 'storefront')],
-      content_type: "product",
-      content_name: prodName,
-      currency: "DZD",
-      value: newOrder.deliveryFeePending ? offer.price : pricing.total,
-      num_items: selectedQty
-    });
 
     // EcoTrack dispatch is intentionally server-side and is triggered from the admin dashboard.
     // This keeps the courier token out of the browser and lets staff verify each order first.
