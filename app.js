@@ -59,6 +59,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   initializePixel();
   initPixelLeadTracking();
   initAutoLeadCapture();
+
+  const requestedProductSlug = new URLSearchParams(window.location.search).get('p');
+  trackPixelEvent('ViewContent', {
+    content_ids: [requestedProductSlug || 'storefront'],
+    content_type: 'product',
+    content_name: requestedProductSlug || APP_CONFIG.product.name,
+    currency: 'DZD'
+  });
   
   // Load product and live delivery data before initializing checkout controls.
   await Promise.all([loadActiveProduct(), loadDeliveryFees(), loadShippingWilayas()]);
@@ -69,15 +77,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   initOfferSelector();
   initOrderForm();
 
-  // Initialize Facebook Pixel if configured
-  const trackingProductId = currentProduct ? String(currentProduct.id || currentProduct.slug) : 'storefront';
-  trackPixelEvent("ViewContent", {
-    content_ids: [trackingProductId],
-    content_type: "product",
-    content_name: currentProduct ? currentProduct.name : APP_CONFIG.product.name,
-    currency: "DZD",
-    value: APP_CONFIG.offers[1].price
-  });
 });
 
 // ======================================================
