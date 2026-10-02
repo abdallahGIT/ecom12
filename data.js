@@ -66,8 +66,8 @@ const APP_CONFIG = {
         window._fbq = queue;
       }
 
-      fbq('init', this.pixelId);
-      fbq('track', 'PageView');
+      window.fbq('init', this.pixelId);
+      window.fbq('track', 'PageView');
       this.initialized = true;
       this.scriptLoadPromise = new Promise(resolve => {
         const existingScript = document.querySelector('script[data-meta-pixel-loader="true"]');
@@ -98,21 +98,40 @@ const APP_CONFIG = {
         };
         document.head.appendChild(script);
       });
-      return this.scriptLoadPromise;
+      // The SDK queue is usable immediately; do not make application events
+      // wait for the external script or a network response.
+      return true;
     },
     track(eventName, params = {}, options = {}) {
-      if (!this.enabled || !this.pixelId || this.pixelId === "YOUR_PIXEL_ID_HERE") return false;
-      if (!this.scriptLoaded) {
-        console.warn(`Meta Pixel ${eventName} queued while the Meta library loads.`);
-      }
-      if (typeof window.fbq === 'function') {
-        window.fbq('track', eventName, params, options);
-        console.log(`📡 [Pixel Event] ${eventName}:`, params);
-        return true;
-      } else {
-        console.log(`📡 [Mock Pixel Event] ${eventName}:`, params);
+      if (!this.enabled || !this.pixelId || this.pixelId === "YOUR_PIXEL_ID_HERE") {
+        console.error(`[Meta Pixel] ${eventName} NOT sent: no Pixel ID is configured (check /api/public-settings and the data.js fallback).`);
         return false;
       }
+      if (typeof window.fbq !== 'function') {
+        console.error(`[Meta Pixel] ${eventName} NOT sent: window.fbq does not exist.`);
+        return false;
+      }
+      const libraryActive = typeof window.fbq.callMethod === 'function';
+      window.fbq('track', eventName, params, options);
+      console.info(`[Meta Pixel] ${eventName} ${libraryActive ? 'handed to fbevents.js' : 'placed in fbq queue (fbevents.js not active yet)'}`, params, options);
+      return true;
+    },
+    diagnostics() {
+      const f = window.fbq;
+      let pixels = null;
+      try {
+        pixels = f && f.getState ? f.getState().pixels.map(pixel => pixel.id) : null;
+      } catch {
+        pixels = null;
+      }
+      return {
+        pixelId: this.pixelId,
+        fbqDefined: typeof f === 'function',
+        queuedInStub: f && f.queue ? f.queue.length : null,
+        scriptTagLoaded: this.scriptLoaded,
+        libraryActive: !!(f && typeof f.callMethod === 'function'),
+        pixelsInitialized: pixels
+      };
     }
   },
 
