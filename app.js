@@ -21,6 +21,8 @@ const pixelLeadPhones = new Set();
 let leadCaptureInFlight = false;
 let pixelInitiateCheckoutSent = false;
 let pixelPurchaseSent = false;
+let pixelPurchaseIntentKey = '';
+let pixelPurchaseEventId = '';
 let pixelReady = false;
 let pixelInitializationFinished = false;
 const pendingPixelEvents = [];
@@ -49,32 +51,22 @@ async function initializePixel() {
     console.warn('Could not initialize Meta Pixel:', err);
   } finally {
     pixelInitializationFinished = true;
-    if (pixelReady) {
-      while (pendingPixelEvents.length) {
-        const { eventName, params } = pendingPixelEvents.shift();
-        trackPixelEvent(eventName, params);
-      }
-      const requestedProductSlug = new URLSearchParams(window.location.search).get('p');
-      trackPixelEvent('ViewContent', {
-        content_ids: [requestedProductSlug || 'storefront'],
-        content_type: 'product',
-        content_name: requestedProductSlug || APP_CONFIG.product.name
-      });
-    } else {
-      pendingPixelEvents.length = 0;
-      console.warn('Meta Pixel events are not being sent because the Meta library did not load.');
+    while (pendingPixelEvents.length) {
+      const { eventName, params, options } = pendingPixelEvents.shift();
+      trackPixelEvent(eventName, params, options);
     }
   }
 }
 
-function trackPixelEvent(eventName, params) {
+function trackPixelEvent(eventName, params, options = {}) {
   if (!pixelInitializationFinished) {
-    pendingPixelEvents.push({ eventName, params });
+    pendingPixelEvents.push({ eventName, params, options });
     return;
   }
-  if (!pixelReady) return;
   try {
-    APP_CONFIG.pixel.track(eventName, params);
+    // Keep Pixel independent from Database/API availability. The Meta SDK
+    // owns its own queue while fbevents.js is loading.
+    APP_CONFIG.pixel.track(eventName, params, options);
   } catch (err) {
     // Pixel failures must never interrupt checkout or lead persistence.
     console.warn(`Could not send Meta Pixel ${eventName} event:`, err);
@@ -83,7 +75,7 @@ function trackPixelEvent(eventName, params) {
 
 function getPixelContentId() {
   const requestedProductSlug = new URLSearchParams(window.location.search).get('p');
-  return String(requestedProductSlug || (currentProduct && (currentProduct.id || currentProduct.slug)) || 'storefront');
+  return String((currentProduct && currentProduct.id) || requestedProductSlug || 'storefront');
 }
 
 function isValidAlgerianPhone(value) {
@@ -92,7 +84,10 @@ function isValidAlgerianPhone(value) {
 }
 
 function normalizeAlgerianPhone(value) {
-  return String(value || '').replace(/[\s().-]/g, '');
+  const compact = String(value || '').replace(/[^\d+]/g, '');
+  if (/^\+213[5-7]\d{8}$/.test(compact)) return `0${compact.slice(4)}`;
+  if (/^213[5-7]\d{8}$/.test(compact)) return `0${compact.slice(3)}`;
+  return compact;
 }
 
 function escapeAttribute(value) {
@@ -108,11 +103,15 @@ document.addEventListener("DOMContentLoaded", async () => {
   initializePixel();
   initPixelLeadTracking();
   initPixelInitiateCheckout();
-  initPixelPurchaseTracking();
   initAutoLeadCapture();
   
   // Load product and live delivery data before initializing checkout controls.
   await Promise.all([loadActiveProduct(), loadDeliveryFees(), loadShippingWilayas()]);
+  trackPixelEvent('ViewContent', {
+    content_ids: [getPixelContentId()],
+    content_type: 'product',
+    content_name: currentProduct ? currentProduct.name : APP_CONFIG.product.name
+  });
   triggerAutoLeadCapture();
 
   // Initialize UI features
@@ -628,24 +627,6 @@ function initPixelInitiateCheckout() {
   }, { once: true });
 }
 
-function initPixelPurchaseTracking() {
-  const submitButton = document.getElementById('submitOrderBtn');
-  if (!submitButton) return;
-
-  submitButton.addEventListener('click', () => {
-    if (pixelPurchaseSent) return;
-    pixelPurchaseSent = true;
-
-    const productName = currentProduct ? currentProduct.name : APP_CONFIG.product.name;
-    trackPixelEvent('Purchase', {
-      content_ids: [getPixelContentId()],
-      content_type: 'product',
-      content_name: productName,
-      num_items: selectedQty
-    });
-  });
-}
-
 function initPixelLeadTracking() {
   const phoneInput = document.getElementById('phone');
   if (!phoneInput) return;
@@ -726,6 +707,35 @@ function initOrderForm() {
     const prodName = currentProduct ? currentProduct.name : APP_CONFIG.product.name;
     const prodId = currentProduct ? currentProduct.id : null;
 
+    // Purchase is intentionally independent from every delivery channel. It
+    // fires after client-side validation, before Database/Telegram/Sheet
+    // integrations, and only once for the same completed form intent.
+    const purchaseIntentKey = JSON.stringify({
+      productId: prodId,
+      quantity: selectedQty,
+      phone: normalizeAlgerianPhone(phone),
+      fullName,
+      willayaId,
+      baladia
+    });
+    if (purchaseIntentKey !== pixelPurchaseIntentKey) {
+      pixelPurchaseIntentKey = purchaseIntentKey;
+      pixelPurchaseEventId = window.crypto?.randomUUID?.()
+        || `purchase_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      pixelPurchaseSent = false;
+    }
+    if (!pixelPurchaseSent) {
+      pixelPurchaseSent = true;
+      trackPixelEvent('Purchase', {
+        content_ids: [getPixelContentId()],
+        content_type: 'product',
+        content_name: prodName,
+        value: Number(pricing.total),
+        currency: 'DZD',
+        num_items: selectedQty
+      }, { eventID: pixelPurchaseEventId });
+    }
+
     const submitBtn = document.getElementById("submitOrderBtn");
     submitBtn.disabled = true;
     submitBtn.innerHTML = `<span>جاري التأكيد...</span>`;
@@ -789,6 +799,9 @@ function initOrderForm() {
     queuedLeadPayload = null;
     pixelLeadPhones.clear();
     pixelInitiateCheckoutSent = false;
+    pixelPurchaseSent = false;
+    pixelPurchaseIntentKey = '';
+    pixelPurchaseEventId = '';
 
     // Reset Form inputs for fresh state if they dismiss modal
     form.reset();

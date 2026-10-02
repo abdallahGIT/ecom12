@@ -71,7 +71,16 @@ const APP_CONFIG = {
       this.initialized = true;
       this.scriptLoadPromise = new Promise(resolve => {
         const existingScript = document.querySelector('script[data-meta-pixel-loader="true"]');
-        if (existingScript) return resolve(this.scriptLoaded);
+        if (existingScript) {
+          existingScript.addEventListener('load', () => {
+            this.scriptLoaded = true;
+            existingScript.dataset.metaPixelLoaded = 'true';
+            resolve(true);
+          }, { once: true });
+          existingScript.addEventListener('error', () => resolve(false), { once: true });
+          if (existingScript.dataset.metaPixelLoaded === 'true') resolve(true);
+          return;
+        }
 
         const script = document.createElement('script');
         script.async = true;
@@ -79,6 +88,7 @@ const APP_CONFIG = {
         script.dataset.metaPixelLoader = 'true';
         script.onload = () => {
           this.scriptLoaded = true;
+          script.dataset.metaPixelLoaded = 'true';
           console.info('✓ Meta Pixel library loaded');
           resolve(true);
         };
@@ -90,13 +100,13 @@ const APP_CONFIG = {
       });
       return this.scriptLoadPromise;
     },
-    track(eventName, params = {}) {
+    track(eventName, params = {}, options = {}) {
       if (!this.enabled || !this.pixelId || this.pixelId === "YOUR_PIXEL_ID_HERE") return false;
       if (!this.scriptLoaded) {
         console.warn(`Meta Pixel ${eventName} queued while the Meta library loads.`);
       }
-      if (typeof fbq === 'function') {
-        fbq('track', eventName, params);
+      if (typeof window.fbq === 'function') {
+        window.fbq('track', eventName, params, options);
         console.log(`📡 [Pixel Event] ${eventName}:`, params);
         return true;
       } else {
