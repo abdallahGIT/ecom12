@@ -17,19 +17,12 @@ let communesRequestId = 0;
 const communesCache = new Map();
 let lastSavedLeadSignature = '';
 let queuedLeadPayload = null;
-const PIXEL_LEAD_STORAGE_KEY = 'meta_pixel_lead_phones';
-const pixelLeadPhones = new Set((() => {
-  try { return JSON.parse(sessionStorage.getItem(PIXEL_LEAD_STORAGE_KEY) || '[]'); } catch { return []; }
-})());
-function rememberPixelLeadPhone(phone) {
-  pixelLeadPhones.add(phone);
-  try { sessionStorage.setItem(PIXEL_LEAD_STORAGE_KEY, JSON.stringify([...pixelLeadPhones])); } catch { /* storage unavailable */ }
-}
+// One Lead per valid phone per page visit. A fresh visit may send a new Lead,
+// which keeps the customer journey and Meta Test Events predictable.
+const pixelLeadPhones = new Set();
 let leadCaptureInFlight = false;
 let pixelInitiateCheckoutSent = false;
 let pixelPurchaseSent = false;
-let pixelPurchaseIntentKey = '';
-let pixelPurchaseEventId = '';
 let pixelReady = false;
 let pixelInitializationFinished = false; // Pixel ID resolved + fbq('init') queued (NOT "fbevents.js loaded")
 let pixelProductIdentityReady = false;  // product lookup settled (or 3s cap) so content_ids are final
@@ -648,7 +641,7 @@ function initPixelLeadTracking() {
   const captureLeadPixel = () => {
     const phone = normalizeAlgerianPhone(phoneInput.value);
     if (!isValidAlgerianPhone(phone) || pixelLeadPhones.has(phone)) return;
-    rememberPixelLeadPhone(phone);
+    pixelLeadPhones.add(phone);
 
     const qty = selectedQty;
     trackPixelEvent('Lead', () => ({
@@ -677,6 +670,24 @@ function initOrderForm() {
   const modalClose = document.getElementById("modalCloseBtn");
 
   if (!form) return;
+
+  const submitBtn = document.getElementById("submitOrderBtn");
+  if (submitBtn) {
+    // Purchase represents the customer's click on the order confirmation
+    // button. It is independent of validation, database storage and delivery
+    // services so an interrupted checkout never loses the conversion signal.
+    submitBtn.addEventListener('click', () => {
+      if (pixelPurchaseSent) return;
+      pixelPurchaseSent = true;
+      const qty = selectedQty;
+      trackPixelEvent('Purchase', () => ({
+        content_ids: [getPixelContentId()],
+        content_type: 'product',
+        content_name: currentProduct ? currentProduct.name : APP_CONFIG.product.name,
+        num_items: qty
+      }));
+    });
+  }
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -720,37 +731,6 @@ function initOrderForm() {
     const pricing = updateTotalPrice();
     const prodName = currentProduct ? currentProduct.name : APP_CONFIG.product.name;
     const prodId = currentProduct ? currentProduct.id : null;
-
-    // Purchase is intentionally independent from every delivery channel. It
-    // fires after client-side validation, before Database/Telegram/Sheet
-    // integrations, and only once for the same completed form intent.
-    const purchaseIntentKey = JSON.stringify({
-      productId: prodId,
-      quantity: selectedQty,
-      phone: normalizeAlgerianPhone(phone),
-      fullName,
-      willayaId,
-      baladia
-    });
-    if (purchaseIntentKey !== pixelPurchaseIntentKey) {
-      pixelPurchaseIntentKey = purchaseIntentKey;
-      pixelPurchaseEventId = window.crypto?.randomUUID?.()
-        || `purchase_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-      pixelPurchaseSent = false;
-    }
-    if (!pixelPurchaseSent) {
-      pixelPurchaseSent = true;
-      const purchaseQty = selectedQty;
-      const purchaseValue = Number(pricing.total);
-      trackPixelEvent('Purchase', () => ({
-        content_ids: [getPixelContentId()],
-        content_type: 'product',
-        content_name: prodName,
-        value: purchaseValue,
-        currency: 'DZD',
-        num_items: purchaseQty
-      }), { eventID: pixelPurchaseEventId });
-    }
 
     const submitBtn = document.getElementById("submitOrderBtn");
     submitBtn.disabled = true;
@@ -815,8 +795,7 @@ function initOrderForm() {
     queuedLeadPayload = null;
     pixelInitiateCheckoutSent = false;
     pixelPurchaseSent = false;
-    pixelPurchaseIntentKey = '';
-    pixelPurchaseEventId = '';
+    pixelLeadPhones.clear();
 
     // Reset Form inputs for fresh state if they dismiss modal
     form.reset();
