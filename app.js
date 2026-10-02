@@ -37,28 +37,8 @@ const pendingPixelEvents = [];
 
 async function initializePixel() {
   try {
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 5000);
-    try {
-      const response = await fetch('/api/public-settings', {
-        cache: 'no-store',
-        signal: controller.signal
-      });
-      const data = await response.json();
-      const savedPixelId = typeof data.settings?.pixel_id === 'string' ? data.settings.pixel_id.trim() : '';
-      // An empty saved value must not erase the configured fallback ID.
-      if (response.ok && data.success && savedPixelId) {
-        APP_CONFIG.pixel.pixelId = savedPixelId;
-      }
-    } catch (err) {
-      console.warn('Could not load the saved Pixel ID; using the configured fallback:', err);
-    } finally {
-      window.clearTimeout(timeout);
-    }
-
-    // init() synchronously creates the fbq queue, queues fbq('init') + PageView and starts
-    // loading fbevents.js. Do NOT await the script: a slow/blocked script must not hold events
-    // outside of fbq's own queue.
+    // Pixel owns its own frontend configuration and bootstraps without waiting for
+    // Database-backed settings, product APIs, delivery APIs, or form submission.
     pixelReady = APP_CONFIG.pixel.init();
   } catch (err) {
     console.warn('Could not initialize Meta Pixel:', err);
@@ -124,7 +104,7 @@ function escapeAttribute(value) {
   }[character]));
 }
 
-document.addEventListener("DOMContentLoaded", async () => {
+document.addEventListener("DOMContentLoaded", () => {
   initSessionToken();
   initSmoothScroll();
   initWilayaSelector();
@@ -132,8 +112,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   initPixelLeadTracking();
   initPixelInitiateCheckout();
   initAutoLeadCapture();
-  
-  // Load product and live delivery data before initializing checkout controls.
+
+  // Form and Pixel pipelines are live immediately. These UI handlers must not wait
+  // for product, courier, wilaya, or any other remote API.
+  initSlider();
+  initOfferSelector();
+  initOrderForm();
+
+  // Data pipeline: enrich the already-live form independently in the background.
   const productReady = loadActiveProduct();
   const checkoutDataReady = Promise.all([loadDeliveryFees(), loadShippingWilayas()]);
   // ViewContent depends only on the product identity (settled or capped at 3s), never on
@@ -143,14 +129,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     content_type: 'product',
     content_name: currentProduct ? currentProduct.name : APP_CONFIG.product.name
   })));
-  await Promise.all([productReady, checkoutDataReady]);
-  triggerAutoLeadCapture();
-
-  // Initialize UI features
-  initSlider();
-  initOfferSelector();
-  initOrderForm();
-
+  Promise.all([productReady, checkoutDataReady])
+    .then(() => triggerAutoLeadCapture())
+    .catch(err => console.warn('Background storefront data loading failed:', err));
 });
 
 // ======================================================

@@ -40,16 +40,18 @@ const APP_CONFIG = {
   // One Meta Pixel for the entire storefront; products are distinguished by content_ids.
   pixel: {
     enabled: true,
-    pixelId: "1808629570178310",
+    // Pixel transport is frontend-owned and must not depend on /api/public-settings.
+    // Keep this equal to the Pixel used in Meta Events Manager.
+    pixelId: "1473661698149519",
     initialized: false,
     scriptLoaded: false,
     scriptLoadPromise: null,
     init() {
-      if (this.scriptLoadPromise) return this.scriptLoadPromise;
+      if (this.initialized) return true;
       if (!this.enabled || !this.pixelId || this.pixelId === "YOUR_PIXEL_ID_HERE") {
-        console.log("ℹ️ [Facebook Pixel] Slot ready. Insert your Pixel ID in data.js or Admin settings.");
+        console.error("[Meta Pixel] Disabled: set a valid Pixel ID in data.js.");
         this.initialized = true;
-        return Promise.resolve(false);
+        return false;
       }
 
       // fbq is a queue until fbevents.js finishes loading. Do not treat the queue
