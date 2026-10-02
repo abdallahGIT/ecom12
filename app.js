@@ -37,6 +37,11 @@ function trackPixelEvent(eventName, params) {
   }
 }
 
+function getPixelContentId() {
+  const requestedProductSlug = new URLSearchParams(window.location.search).get('p');
+  return String((currentProduct && (currentProduct.id || currentProduct.slug)) || requestedProductSlug || 'storefront');
+}
+
 function isValidAlgerianPhone(value) {
   const phone = String(value || '').replace(/[\s().-]/g, '');
   return /^(?:\+213[5-7]\d{8}|0[5-7]\d{8})$/.test(phone);
@@ -59,14 +64,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   initializePixel();
   initPixelLeadTracking();
   initAutoLeadCapture();
-
-  const requestedProductSlug = new URLSearchParams(window.location.search).get('p');
-  trackPixelEvent('ViewContent', {
-    content_ids: [requestedProductSlug || 'storefront'],
-    content_type: 'product',
-    content_name: requestedProductSlug || APP_CONFIG.product.name,
-    currency: 'DZD'
-  });
   
   // Load product and live delivery data before initializing checkout controls.
   await Promise.all([loadActiveProduct(), loadDeliveryFees(), loadShippingWilayas()]);
@@ -196,6 +193,13 @@ async function loadActiveProduct() {
   } catch (err) {
     console.warn("Could not fetch active product from DB, using fallback config:", err);
   } finally {
+    const requestedProductSlug = new URLSearchParams(window.location.search).get('p');
+    trackPixelEvent('ViewContent', {
+      content_ids: [getPixelContentId()],
+      content_type: 'product',
+      content_name: currentProduct ? currentProduct.name : (requestedProductSlug || APP_CONFIG.product.name),
+      currency: 'DZD'
+    });
     document.body.classList.remove('product-loading');
   }
 }
@@ -571,9 +575,8 @@ function initPixelLeadTracking() {
     const offer = APP_CONFIG.offers[selectedQty] || APP_CONFIG.offers[1];
     const deliveryFee = getSelectedDeliveryFee();
     const productName = currentProduct ? currentProduct.name : APP_CONFIG.product.name;
-    const productId = currentProduct ? currentProduct.id : null;
     trackPixelEvent('Lead', {
-      content_ids: [String(productId || (currentProduct && (currentProduct.id || currentProduct.slug)) || 'storefront')],
+      content_ids: [getPixelContentId()],
       content_type: 'product',
       content_name: productName,
       currency: 'DZD',
@@ -665,7 +668,7 @@ function initOrderForm() {
 
     // Purchase is a click-conversion event: track it independently before any server request.
     trackPixelEvent('Purchase', {
-      content_ids: [String(prodId || (currentProduct && (currentProduct.id || currentProduct.slug)) || 'storefront')],
+      content_ids: [getPixelContentId()],
       content_type: 'product',
       content_name: prodName,
       currency: 'DZD',
