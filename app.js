@@ -19,6 +19,7 @@ let lastSavedLeadSignature = '';
 let queuedLeadPayload = null;
 const pixelLeadPhones = new Set();
 let leadCaptureInFlight = false;
+let pixelInitiateCheckoutSent = false;
 let pixelReady = false;
 const pendingPixelEvents = [];
 
@@ -92,6 +93,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   initWilayaSelector();
   initializePixel();
   initPixelLeadTracking();
+  initPixelInitiateCheckout();
   initAutoLeadCapture();
   
   // Load product and live delivery data before initializing checkout controls.
@@ -592,6 +594,39 @@ function pricingTotalForLead(productPrice, deliveryFee) {
   return Math.round(Number(productPrice || 0) + Number(deliveryFee || 0));
 }
 
+function initPixelInitiateCheckout() {
+  const fields = ['fullName', 'phone', 'willayaSelect', 'baladiaSelect']
+    .map(id => document.getElementById(id))
+    .filter(Boolean);
+  if (!fields.length) return;
+
+  const trackInitiateCheckout = () => {
+    if (pixelInitiateCheckoutSent) return;
+    pixelInitiateCheckoutSent = true;
+
+    const offer = APP_CONFIG.offers[selectedQty] || APP_CONFIG.offers[1];
+    const productName = currentProduct ? currentProduct.name : APP_CONFIG.product.name;
+    trackPixelEvent('InitiateCheckout', {
+      content_ids: [getPixelContentId()],
+      content_type: 'product',
+      content_name: productName,
+      currency: 'DZD',
+      value: pricingTotalForLead(offer.price, getSelectedDeliveryFee()),
+      num_items: selectedQty
+    });
+  };
+
+  fields.forEach(field => {
+    field.addEventListener('focus', trackInitiateCheckout);
+    field.addEventListener('input', trackInitiateCheckout);
+    field.addEventListener('change', trackInitiateCheckout);
+  });
+
+  window.addEventListener('pageshow', () => {
+    if (fields.some(field => String(field.value || '').trim())) trackInitiateCheckout();
+  }, { once: true });
+}
+
 function initPixelLeadTracking() {
   const phoneInput = document.getElementById('phone');
   if (!phoneInput) return;
@@ -748,6 +783,7 @@ function initOrderForm() {
     lastSavedLeadSignature = '';
     queuedLeadPayload = null;
     pixelLeadPhones.clear();
+    pixelInitiateCheckoutSent = false;
 
     // Reset Form inputs for fresh state if they dismiss modal
     form.reset();
