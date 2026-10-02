@@ -42,28 +42,59 @@ const APP_CONFIG = {
     enabled: true,
     pixelId: "1808629570178310",
     initialized: false,
+    scriptLoaded: false,
+    scriptLoadPromise: null,
     init() {
-      if (this.initialized) return true;
+      if (this.scriptLoadPromise) return this.scriptLoadPromise;
       if (!this.enabled || !this.pixelId || this.pixelId === "YOUR_PIXEL_ID_HERE") {
         console.log("ℹ️ [Facebook Pixel] Slot ready. Insert your Pixel ID in data.js or Admin settings.");
         this.initialized = true;
-        return false;
+        return Promise.resolve(false);
       }
-      !function(f,b,e,v,n,t,s)
-      {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
-      n.callMethod.apply(n,arguments):n.queue.push(arguments)};
-      if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
-      n.queue=[];t=b.createElement(e);t.async=!0;
-      t.src=v;s=b.getElementsByTagName(e)[0];
-      s.parentNode.insertBefore(t,s)}(window, document,'script',
-      'https://connect.facebook.net/en_US/fbevents.js');
+
+      // fbq is a queue until fbevents.js finishes loading. Do not treat the queue
+      // as a successful Meta connection: report script load failures explicitly.
+      if (!window.fbq) {
+        const queue = function () {
+          queue.callMethod ? queue.callMethod.apply(queue, arguments) : queue.queue.push(arguments);
+        };
+        queue.push = queue;
+        queue.loaded = true;
+        queue.version = '2.0';
+        queue.queue = [];
+        window.fbq = queue;
+        window._fbq = queue;
+      }
+
       fbq('init', this.pixelId);
       fbq('track', 'PageView');
       this.initialized = true;
-      return true;
+      this.scriptLoadPromise = new Promise(resolve => {
+        const existingScript = document.querySelector('script[data-meta-pixel-loader="true"]');
+        if (existingScript) return resolve(this.scriptLoaded);
+
+        const script = document.createElement('script');
+        script.async = true;
+        script.src = 'https://connect.facebook.net/en_US/fbevents.js';
+        script.dataset.metaPixelLoader = 'true';
+        script.onload = () => {
+          this.scriptLoaded = true;
+          console.info('✓ Meta Pixel library loaded');
+          resolve(true);
+        };
+        script.onerror = () => {
+          console.error('Meta Pixel library was blocked or could not load from connect.facebook.net. Disable the ad/tracker blocker for maisonverre.vercel.app and test again.');
+          resolve(false);
+        };
+        document.head.appendChild(script);
+      });
+      return this.scriptLoadPromise;
     },
     track(eventName, params = {}) {
       if (!this.enabled || !this.pixelId || this.pixelId === "YOUR_PIXEL_ID_HERE") return false;
+      if (!this.scriptLoaded) {
+        console.warn(`Meta Pixel ${eventName} queued while the Meta library loads.`);
+      }
       if (typeof fbq === 'function') {
         fbq('track', eventName, params);
         console.log(`📡 [Pixel Event] ${eventName}:`, params);

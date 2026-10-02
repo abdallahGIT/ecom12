@@ -21,6 +21,7 @@ const pixelLeadPhones = new Set();
 let leadCaptureInFlight = false;
 let pixelInitiateCheckoutSent = false;
 let pixelReady = false;
+let pixelInitializationFinished = false;
 const pendingPixelEvents = [];
 
 async function initializePixel() {
@@ -42,23 +43,29 @@ async function initializePixel() {
       window.clearTimeout(timeout);
     }
 
-    APP_CONFIG.pixel.init();
+    pixelReady = await APP_CONFIG.pixel.init();
   } catch (err) {
     console.warn('Could not initialize Meta Pixel:', err);
   } finally {
-    pixelReady = true;
-    while (pendingPixelEvents.length) {
-      const { eventName, params } = pendingPixelEvents.shift();
-      trackPixelEvent(eventName, params);
+    pixelInitializationFinished = true;
+    if (pixelReady) {
+      while (pendingPixelEvents.length) {
+        const { eventName, params } = pendingPixelEvents.shift();
+        trackPixelEvent(eventName, params);
+      }
+    } else {
+      pendingPixelEvents.length = 0;
+      console.warn('Meta Pixel events are not being sent because the Meta library did not load.');
     }
   }
 }
 
 function trackPixelEvent(eventName, params) {
-  if (!pixelReady) {
+  if (!pixelInitializationFinished) {
     pendingPixelEvents.push({ eventName, params });
     return;
   }
+  if (!pixelReady) return;
   try {
     APP_CONFIG.pixel.track(eventName, params);
   } catch (err) {
