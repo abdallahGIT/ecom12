@@ -14,6 +14,7 @@ let currentProductImages = []; // Array of image URLs for the modal
 let productsLoadError = "";
 let ordersLoadError = "";
 let leadsLoadError = "";
+let dashboardRefreshInFlight = false;
 
 async function fetchAdminJson(url, options) {
   const res = await fetch(url, options);
@@ -36,6 +37,18 @@ document.addEventListener("DOMContentLoaded", async () => {
   await loadOrders();
   await loadLeads();
   await loadApiSettings();
+
+  // Keep phone-verified leads and new orders visible to staff without a manual refresh.
+  window.setInterval(async () => {
+    if (document.visibilityState !== 'visible' || dashboardRefreshInFlight) return;
+    dashboardRefreshInFlight = true;
+    try {
+      await loadLeads();
+      if (!document.querySelector('.order-check:checked')) await loadOrders();
+    } finally {
+      dashboardRefreshInFlight = false;
+    }
+  }, 15000);
 });
 
 // ======================================================

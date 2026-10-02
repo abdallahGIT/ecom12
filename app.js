@@ -15,7 +15,9 @@ let deliveryFeesReady = false;
 let deliveryFeesLoading = true;
 let communesRequestId = 0;
 const communesCache = new Map();
-let lastCapturedLeadPhone = '';
+let lastSavedLeadSignature = '';
+let queuedLeadPayload = null;
+const pixelLeadPhones = new Set();
 let leadCaptureInFlight = false;
 
 function isValidAlgerianPhone(value) {
@@ -37,18 +39,19 @@ document.addEventListener("DOMContentLoaded", async () => {
   initSessionToken();
   initSmoothScroll();
   initWilayaSelector();
+  APP_CONFIG.pixel.init();
+  initAutoLeadCapture();
   
   // Load product and live delivery data before initializing checkout controls.
   await Promise.all([loadActiveProduct(), loadDeliveryFees(), loadShippingWilayas()]);
+  triggerAutoLeadCapture();
 
   // Initialize UI features
   initSlider();
   initOfferSelector();
-  initAutoLeadCapture();
   initOrderForm();
 
   // Initialize Facebook Pixel if configured
-  APP_CONFIG.pixel.init();
   const trackingProductId = currentProduct ? String(currentProduct.id || currentProduct.slug) : 'storefront';
   APP_CONFIG.pixel.track("ViewContent", {
     content_ids: [trackingProductId],
@@ -431,18 +434,21 @@ function initAutoLeadCapture() {
   const willayaSelect = document.getElementById("willayaSelect");
   const baladiaSelect = document.getElementById("baladiaSelect");
 
-  // Capture only after a complete, valid Algerian phone number is entered.
+  // Capture immediately after a complete, valid phone is typed or autofilled.
   const debouncedCapture = () => {
     clearTimeout(leadCaptureTimer);
-    leadCaptureTimer = setTimeout(triggerAutoLeadCapture, 250);
+    leadCaptureTimer = setTimeout(triggerAutoLeadCapture, 100);
   };
 
   if (phoneInput) {
     phoneInput.addEventListener("input", debouncedCapture);
+    phoneInput.addEventListener("change", triggerAutoLeadCapture);
     phoneInput.addEventListener("blur", triggerAutoLeadCapture);
+    phoneInput.addEventListener("focus", () => setTimeout(triggerAutoLeadCapture, 0));
   }
   if (fullNameInput) {
     fullNameInput.addEventListener("input", debouncedCapture);
+    fullNameInput.addEventListener("change", triggerAutoLeadCapture);
     fullNameInput.addEventListener("blur", triggerAutoLeadCapture);
   }
   if (willayaSelect) {
@@ -451,6 +457,9 @@ function initAutoLeadCapture() {
   if (baladiaSelect) {
     baladiaSelect.addEventListener("change", triggerAutoLeadCapture);
   }
+  window.addEventListener('pageshow', triggerAutoLeadCapture);
+  window.addEventListener('online', triggerAutoLeadCapture);
+  triggerAutoLeadCapture();
 }
 
 async function triggerAutoLeadCapture() {
@@ -467,8 +476,7 @@ async function triggerAutoLeadCapture() {
     : "";
   const baladia = baladiaSelect ? baladiaSelect.value.trim() : "";
 
-  if (!isValidAlgerianPhone(phone) || leadCaptureInFlight || phone === lastCapturedLeadPhone) return;
-  leadCaptureInFlight = true;
+  if (!isValidAlgerianPhone(phone)) return;
 
   const offer = APP_CONFIG.offers[selectedQty] || APP_CONFIG.offers[1];
   const deliveryFee = getSelectedDeliveryFee();
@@ -489,34 +497,58 @@ async function triggerAutoLeadCapture() {
     productName: prodName
   };
 
-  // Meta receives the event, not the phone number. The phone stays in our protected database only.
-  APP_CONFIG.pixel.track("Lead", {
-    content_ids: [String(prodId || (currentProduct && (currentProduct.id || currentProduct.slug)) || 'storefront')],
-    content_type: "product",
-    content_name: prodName,
-    currency: "DZD",
-    value: pricingTotalForLead(offer.price, deliveryFee),
-    num_items: selectedQty,
-    lead_source: "valid_phone_input"
-  });
-
-  try {
-    const response = await fetch('/api/leads', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+  // Meta receives the event, never the phone number. Fire once per valid phone in this session.
+  if (!pixelLeadPhones.has(phone)) {
+    pixelLeadPhones.add(phone);
+    APP_CONFIG.pixel.track("Lead", {
+      content_ids: [String(prodId || (currentProduct && (currentProduct.id || currentProduct.slug)) || 'storefront')],
+      content_type: "product",
+      content_name: prodName,
+      currency: "DZD",
+      value: pricingTotalForLead(offer.price, deliveryFee),
+      num_items: selectedQty,
+      lead_source: "valid_phone_input"
     });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok || !result.success) {
-      throw new Error(result.error || `تعذر حفظ بيانات الزبون (${response.status})`);
+  }
+
+  const signature = JSON.stringify(payload);
+  if (signature === lastSavedLeadSignature) return;
+  if (leadCaptureInFlight) {
+    queuedLeadPayload = payload;
+    return;
+  }
+
+  leadCaptureInFlight = true;
+  let nextPayload = payload;
+  try {
+    while (nextPayload) {
+      const nextSignature = JSON.stringify(nextPayload);
+      if (nextSignature !== lastSavedLeadSignature) {
+        try {
+          const requestOptions = {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(nextPayload)
+          };
+          if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+            requestOptions.signal = AbortSignal.timeout(5000);
+          }
+          const response = await fetch('/api/leads', requestOptions);
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok || !result.success) {
+            throw new Error(result.error || `تعذر حفظ بيانات الزبون (${response.status})`);
+          }
+          lastSavedLeadSignature = nextSignature;
+        } catch (err) {
+          console.warn("Could not sync draft lead to DB:", err);
+        }
+      }
+      nextPayload = queuedLeadPayload;
+      queuedLeadPayload = null;
     }
-    lastCapturedLeadPhone = phone;
-    console.log("📡 [Lead Saver] Valid phone lead captured silently.");
-  } catch (err) {
-    console.warn("Could not sync draft lead to DB:", err);
-    lastCapturedLeadPhone = '';
   } finally {
     leadCaptureInFlight = false;
+    if (queuedLeadPayload) triggerAutoLeadCapture();
   }
 }
 
@@ -646,6 +678,9 @@ function initOrderForm() {
     // Clear session lead token for new session
     sessionStorage.removeItem("ecom_lead_session_token");
     initSessionToken();
+    lastSavedLeadSignature = '';
+    queuedLeadPayload = null;
+    pixelLeadPhones.clear();
 
     // Reset Form inputs for fresh state if they dismiss modal
     form.reset();

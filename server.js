@@ -855,9 +855,37 @@ app.post('/api/orders', async (req, res) => {
     // If sessionToken was attached, mark corresponding lead as converted
     if (sessionToken) {
       await client.query(`
-        UPDATE leads SET status = 'converted', updated_at = CURRENT_TIMESTAMP
-        WHERE session_token = $1 OR phone = $2;
-      `, [sessionToken, normalizedPhone]);
+        INSERT INTO leads (
+          id, session_token, product_id, product_name, full_name, phone,
+          willaya, willaya_id, baladia, quantity, price, delivery_fee, status, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'converted', CURRENT_TIMESTAMP)
+        ON CONFLICT (session_token) DO UPDATE SET
+          product_id = EXCLUDED.product_id,
+          product_name = EXCLUDED.product_name,
+          full_name = EXCLUDED.full_name,
+          phone = EXCLUDED.phone,
+          willaya = EXCLUDED.willaya,
+          willaya_id = EXCLUDED.willaya_id,
+          baladia = EXCLUDED.baladia,
+          quantity = EXCLUDED.quantity,
+          price = EXCLUDED.price,
+          delivery_fee = EXCLUDED.delivery_fee,
+          status = 'converted',
+          updated_at = CURRENT_TIMESTAMP;
+      `, [
+        `LEAD-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`,
+        String(sessionToken).slice(0, 100),
+        product.id,
+        product.name,
+        cleanName,
+        normalizedPhone,
+        willaya ? willaya.trim() : 'غير محدد',
+        Number.isInteger(normalizedWilayaId) && normalizedWilayaId >= 1 && normalizedWilayaId <= 58 ? normalizedWilayaId : null,
+        baladia ? baladia.trim() : '',
+        qty,
+        finalPrice,
+        finalDeliveryFee
+      ]);
     }
 
     await client.query('UPDATE products SET stock = stock - $1 WHERE id = $2;', [qty, product.id]);
