@@ -297,7 +297,7 @@ async function loadActiveProduct() {
     }
   } catch (err) {
     console.warn("Could not fetch active product from DB:", err);
-    showProductUnavailable('تعذر تحميل المنتج من قاعدة البيانات. حاول تحديث الصفحة.');
+    showProductUnavailable('تعذر تحميل المنتج. حاول تحديث الصفحة.');
   } finally {
     document.body.classList.remove('product-loading');
     resolveProductIdentity();
