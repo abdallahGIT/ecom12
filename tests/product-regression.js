@@ -22,6 +22,9 @@ assert.deepEqual(
   utils.normalizeProductFeatures([{ icon: '🌿', label: 'جيد' }, { label: '' }]),
   [{ icon: '🌿', label: 'جيد' }]
 );
+const serverSource = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'server.js'), 'utf8');
+assert.doesNotMatch(serverSource, /INSERT INTO products[\s\S]{0,1200}'lavender'/i);
+assert.match(serverSource, /DELETE FROM products WHERE slug = 'lavender'/i);
 assert.deepEqual(
   ecotrack.normalizeFees([
     { wilaya_id: 16, tarif: '600', tarif_stopdesk: '400' },

@@ -278,6 +278,18 @@ async function initDb() {
            OR images::text LIKE '%assets/lavender.png%';
       `);
 
+      // Lavender was a legacy catalog seed. Remove it from existing databases and
+      // never recreate it; historical orders/leads keep their product name snapshot.
+      await client.query(`
+        UPDATE orders
+        SET product_id = NULL
+        WHERE product_id IN (SELECT id FROM products WHERE slug = 'lavender');
+        UPDATE leads
+        SET product_id = NULL
+        WHERE product_id IN (SELECT id FROM products WHERE slug = 'lavender');
+        DELETE FROM products WHERE slug = 'lavender';
+      `);
+
       // Seed default product if table is empty
       const productCountRes = await client.query('SELECT COUNT(*) FROM products;');
       const count = parseInt(productCountRes.rows[0].count, 10);
@@ -311,33 +323,6 @@ async function initDb() {
           ])
         ]);
       }
-
-      // Keep the new lavender product available without changing existing catalog data.
-      await client.query(`
-        INSERT INTO products (slug, name, subtitle, description, price_1, price_2, price_3, stock, images, features, pixel_id, is_active)
-        VALUES (
-          'lavender',
-          'بذور اللافندر الفاخرة',
-          'رائحة طبيعية فاخرة · زراعة منزلية سهلة · توصيل لكافة الولايات',
-          'بذور اللافندر أو الخزامى للزراعة المنزلية، تمنحك أزهاراً بنفسجية جميلة ورائحة عطرية مميزة مع الدفع عند الاستلام.',
-          1990,
-          3500,
-          4900,
-          50,
-          $1::jsonb,
-          $2::jsonb,
-          '1473661698149519',
-          true
-        )
-        ON CONFLICT (slug) DO NOTHING;
-      `, [
-        JSON.stringify(['assets/lavender.webp']),
-        JSON.stringify([
-          { icon: '💜', label: 'رائحة عطرية فاخرة' },
-          { icon: '🌿', label: 'زراعة منزلية سهلة' },
-          { icon: '📦', label: 'توصيل مضمون' }
-        ])
-      ]);
 
       await client.query('COMMIT');
       console.log('✅ Database schema verified and ready.');

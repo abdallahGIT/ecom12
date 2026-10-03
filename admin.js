@@ -11,6 +11,7 @@ let searchQuery = "";
 let leadsSearchQuery = "";
 let currentTableTab = "orders";
 let currentProductImages = []; // Array of image URLs for the modal
+const deletingProductIds = new Set();
 let productsLoadError = "";
 let ordersLoadError = "";
 let leadsLoadError = "";
@@ -190,7 +191,7 @@ function renderProductsGrid() {
           <div class="prod-actions">
             <a class="btn-tbl" href="${escapeHtml(productUrl)}" target="_blank" rel="noopener" title="فتح المنتج في المتجر">🔗 فتح الرابط</a>
             <button class="btn-tbl edit-btn" onclick="openEditProductModal(${Number(prod.id)})" title="تعديل المنتج">✏️ تعديل</button>
-            <button type="button" class="btn-tbl delete" onclick="handleDeleteProduct(${Number(prod.id)})" title="حذف المنتج">🗑️</button>
+            <button type="button" class="btn-tbl delete" onclick="handleDeleteProduct(${Number(prod.id)}, this)" title="حذف المنتج">🗑️</button>
           </div>
         </div>
       </div>
@@ -354,9 +355,16 @@ async function handlePhotoFilesUpload(files) {
   }
 }
 
-window.handleDeleteProduct = async function(productId) {
+window.handleDeleteProduct = async function(productId, button) {
+  const normalizedId = String(productId);
+  if (deletingProductIds.has(normalizedId)) return;
   const productName = currentProducts.find(product => String(product.id) === String(productId))?.name || `رقم ${productId}`;
   if (confirm(`هل أنت متأكد من حذف المنتج "${productName}" نهائياً من قاعدة بيانات Neon؟`)) {
+    deletingProductIds.add(normalizedId);
+    if (button) {
+      button.disabled = true;
+      button.textContent = '⏳';
+    }
     try {
       const { data } = await fetchAdminJson(`/api/products/${encodeURIComponent(productId)}`, { method: 'DELETE' });
       if (!data.success) throw new Error(data.error || 'تعذر حذف المنتج');
@@ -364,6 +372,8 @@ window.handleDeleteProduct = async function(productId) {
       await checkDbHealth();
     } catch (err) {
       alert(err.message || 'فشل الاتصال بالسيرفر. لم يتم حذف المنتج.');
+    } finally {
+      deletingProductIds.delete(normalizedId);
     }
   }
 };
