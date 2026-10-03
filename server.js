@@ -321,7 +321,7 @@ async function initDb() {
           50,
           $1::jsonb,
           $2::jsonb,
-          '1808629570178310',
+          '1473661698149519',
           true
         )
         ON CONFLICT (slug) DO NOTHING;
@@ -768,10 +768,10 @@ app.post('/api/orders', async (req, res) => {
       willayaId
     } = req.body;
 
-    const cleanName = String(fullName || '').trim();
+    const cleanName = String(fullName || '').trim() || 'زبون بدون اسم';
     const normalizedPhone = normalizeAlgerianPhone(phone);
-    if (!cleanName || !isValidAlgerianPhone(normalizedPhone)) {
-      return res.status(400).json({ success: false, error: 'يرجى إدخال اسم ورقم هاتف جزائري صحيح' });
+    if (!isValidAlgerianPhone(normalizedPhone)) {
+      return res.status(400).json({ success: false, error: 'يرجى إدخال رقم هاتف جزائري صحيح' });
     }
 
     const qty = Number(quantity);
@@ -1356,10 +1356,14 @@ app.get('/api/public-settings', async (req, res) => {
   try {
     await initDb();
     const result = await pool.query("SELECT value FROM settings WHERE key = 'pixel_id' LIMIT 1;");
+    const storedPixelId = String(result.rows[0]?.value || '').trim();
+    const pixelId = /^\d{10,20}$/.test(storedPixelId) && storedPixelId !== '1808629570178310'
+      ? storedPixelId
+      : null;
     res.set('Cache-Control', 'no-store');
     res.json({
       success: true,
-      settings: { pixel_id: result.rows[0] ? String(result.rows[0].value || '') : null }
+      settings: { pixel_id: pixelId }
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -1385,6 +1389,12 @@ app.post('/api/settings', async (req, res) => {
     await initDb();
     const entries = Object.entries(req.body);
     for (const [key, value] of entries) {
+      if (key === 'pixel_id') {
+        const pixelId = String(value || '').trim();
+        if (pixelId && (!/^\d{10,20}$/.test(pixelId) || pixelId === '1808629570178310')) {
+          return res.status(400).json({ success: false, error: 'Pixel ID غير صالح أو قديم' });
+        }
+      }
       if (['ecotrack_token', 'ecotrack_key'].includes(key) && (!value || String(value).includes('••••'))) continue;
       await pool.query(`
         INSERT INTO settings (key, value, updated_at)

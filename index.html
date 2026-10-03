@@ -116,13 +116,14 @@
           <!-- Phone Number (First) -->
           <div class="form-group">
             <label class="form-label" for="phone">رقم الهاتف *</label>
-            <input type="tel" id="phone" class="form-input" placeholder="مثال: 0555123456" required autocomplete="tel" dir="ltr" style="text-align: right;">
+            <input type="tel" id="phone" class="form-input" placeholder="مثال: 0555123456" required autocomplete="tel" inputmode="tel" maxlength="13" dir="ltr" style="text-align: right;">
+            <small id="phoneHint" class="phone-hint" aria-live="polite">أدخل رقم الهاتف الجزائري: 10 أرقام</small>
           </div>
 
           <!-- Full Name -->
           <div class="form-group">
-            <label class="form-label" for="fullName">الاسم الكامل *</label>
-            <input type="text" id="fullName" class="form-input" placeholder="مثال: يوسف قادري" required autocomplete="name">
+            <label class="form-label" for="fullName">الاسم الكامل <span class="optional-label">(اختياري)</span></label>
+            <input type="text" id="fullName" class="form-input" placeholder="مثال: يوسف قادري" autocomplete="name">
           </div>
 
           <!-- Willaya & Baladia Rows -->

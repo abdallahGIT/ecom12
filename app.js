@@ -37,8 +37,25 @@ const pendingPixelEvents = [];
 
 async function initializePixel() {
   try {
-    // Pixel owns its own frontend configuration and bootstraps without waiting for
-    // Database-backed settings, product APIs, delivery APIs, or form submission.
+    const fallbackPixelId = APP_CONFIG.pixel.pixelId;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 1500);
+    try {
+      const response = await fetch('/api/public-settings', { cache: 'no-store', signal: controller.signal });
+      const data = await response.json().catch(() => ({}));
+      const adminPixelId = String(data.settings?.pixel_id || '').trim();
+      if (response.ok && data.success && /^\d{10,20}$/.test(adminPixelId) && adminPixelId !== '1808629570178310') {
+        APP_CONFIG.pixel.pixelId = adminPixelId;
+      } else {
+        APP_CONFIG.pixel.pixelId = fallbackPixelId;
+      }
+    } catch {
+      APP_CONFIG.pixel.pixelId = fallbackPixelId;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+
+    // Admin is authoritative when available; data.js remains the safe fallback.
     pixelReady = APP_CONFIG.pixel.init();
   } catch (err) {
     console.warn('Could not initialize Meta Pixel:', err);
@@ -98,6 +115,37 @@ function normalizeAlgerianPhone(value) {
   return compact;
 }
 
+function initPhoneGuidance() {
+  const input = document.getElementById('phone');
+  const hint = document.getElementById('phoneHint');
+  if (!input || !hint) return;
+
+  const update = () => {
+    const raw = input.value.trim();
+    const normalized = normalizeAlgerianPhone(raw);
+    if (!raw) {
+      hint.textContent = 'أدخل رقم الهاتف الجزائري: 10 أرقام';
+      hint.className = 'phone-hint';
+      return;
+    }
+    if (isValidAlgerianPhone(normalized)) {
+      hint.textContent = '✓ الرقم مكتمل وصحيح';
+      hint.className = 'phone-hint phone-hint-valid';
+      return;
+    }
+    const digits = normalized.replace(/\D/g, '');
+    const localDigits = digits.startsWith('213') ? digits.slice(3) : digits;
+    const remaining = Math.max(0, 10 - localDigits.length);
+    hint.textContent = remaining > 0
+      ? `بقي ${remaining} ${remaining === 1 ? 'رقم' : 'أرقام'} لإكمال الهاتف`
+      : 'تحقق من صيغة الرقم الجزائري';
+    hint.className = 'phone-hint phone-hint-progress';
+  };
+
+  input.addEventListener('input', update);
+  update();
+}
+
 function escapeAttribute(value) {
   return String(value ?? '').replace(/[&<>"']/g, character => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -109,6 +157,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initSmoothScroll();
   initWilayaSelector();
   initializePixel();
+  initPhoneGuidance();
   initPixelLeadTracking();
   initPixelInitiateCheckout();
   initAutoLeadCapture();
@@ -632,22 +681,17 @@ function initPixelInitiateCheckout() {
   ['pointerdown', 'focusin', 'input', 'change'].forEach(eventName => {
     form.addEventListener(eventName, trackInitiateCheckout);
   });
-
-  window.addEventListener('pageshow', () => {
-    const customerFields = ['fullName', 'phone', 'willayaSelect', 'baladiaSelect']
-      .map(id => document.getElementById(id))
-      .filter(Boolean);
-    if (customerFields.some(field => String(field.value || '').trim())) trackInitiateCheckout();
-  }, { once: true });
 }
 
 function initPixelLeadTracking() {
   const phoneInput = document.getElementById('phone');
   if (!phoneInput) return;
 
+  let lastTrackedPhone = '';
   const captureLeadPixel = () => {
     const phone = normalizeAlgerianPhone(phoneInput.value);
-    if (!isValidAlgerianPhone(phone) || pixelLeadPhones.has(phone)) return;
+    if (!isValidAlgerianPhone(phone) || phone === lastTrackedPhone || pixelLeadPhones.has(phone)) return;
+    lastTrackedPhone = phone;
     rememberPixelLeadPhone(phone);
 
     const qty = selectedQty;
@@ -660,12 +704,9 @@ function initPixelLeadTracking() {
     }));
   };
 
+  // Meta Lead is a manual phone-completion event only. Do not fire on load,
+  // focus, blur, change, pageshow, autofill, or restored form values.
   phoneInput.addEventListener('input', captureLeadPixel);
-  phoneInput.addEventListener('change', captureLeadPixel);
-  phoneInput.addEventListener('blur', captureLeadPixel);
-  phoneInput.addEventListener('focus', () => setTimeout(captureLeadPixel, 0));
-  window.addEventListener('pageshow', captureLeadPixel);
-  captureLeadPixel();
 }
 
 // ======================================================
@@ -694,12 +735,6 @@ function initOrderForm() {
     if (!isValidAlgerianPhone(phone)) {
       alert("يرجى إدخال رقم جزائري صحيح: 05/06/07 + 8 أرقام أو +213 + 9 أرقام");
       phoneInput.focus();
-      return;
-    }
-
-    if (!fullName) {
-      alert("يرجى كتابة الاسم الكامل");
-      fullNameInput.focus();
       return;
     }
 
@@ -837,6 +872,12 @@ function initSmoothScroll() {
   if (heroCta && orderSection) {
     heroCta.addEventListener("click", (e) => {
       e.preventDefault();
+      trackPixelEvent('AddToCart', () => ({
+        content_ids: [getPixelContentId()],
+        content_type: 'product',
+        content_name: currentProduct ? currentProduct.name : APP_CONFIG.product.name,
+        num_items: selectedQty
+      }));
       orderSection.scrollIntoView({ behavior: "smooth" });
     });
   }

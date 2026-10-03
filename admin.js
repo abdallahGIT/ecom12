@@ -1338,7 +1338,9 @@ async function loadApiSettings() {
     const res = await fetch('/api/settings');
     const data = await res.json();
     if (data.success && data.settings) {
-      if (data.settings.pixel_id) document.getElementById("pixelIdInput").value = data.settings.pixel_id;
+      if (data.settings.pixel_id && data.settings.pixel_id !== '1808629570178310') {
+        document.getElementById("pixelIdInput").value = data.settings.pixel_id;
+      }
       if (data.settings.ecotrack_provider) document.getElementById("ecotrackProviderInput").value = data.settings.ecotrack_provider;
       if (data.settings.ecotrack_url) document.getElementById("ecotrackUrlInput").value = data.settings.ecotrack_url;
       if (data.settings.ecotrack_token || data.settings.ecotrack_key) document.getElementById("ecotrackKeyInput").value = data.settings.ecotrack_token || data.settings.ecotrack_key;
@@ -1355,6 +1357,11 @@ async function saveApiSettings() {
   const ecoStoreVal = document.getElementById("ecotrackStoreInput").value.trim();
   const ecoProviderVal = document.getElementById("ecotrackProviderInput").value.trim().toLowerCase();
   const ecoUrlVal = document.getElementById("ecotrackUrlInput").value.trim();
+
+  if (pixelVal && (!/^\d{10,20}$/.test(pixelVal) || pixelVal === '1808629570178310')) {
+    alert('يرجى إدخال Pixel ID صالح. تم منع Pixel ID القديم.');
+    return;
+  }
 
   try {
     const res = await fetch('/api/settings', {

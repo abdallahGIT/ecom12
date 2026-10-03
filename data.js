@@ -68,6 +68,9 @@ const APP_CONFIG = {
         window._fbq = queue;
       }
 
+      // Use only the events explicitly defined by this landing page. This prevents
+      // Meta Automatic Events such as SubscribedButtonClick from mixing with them.
+      window.fbq('set', 'autoConfig', false, this.pixelId);
       window.fbq('init', this.pixelId);
       window.fbq('track', 'PageView');
       this.initialized = true;
