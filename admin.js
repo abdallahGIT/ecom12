@@ -382,6 +382,11 @@ window.handleDeleteProduct = async function(productId, button) {
 // 3. ORDERS MANAGEMENT (NEON DB)
 // ======================================================
 async function loadOrders() {
+  const refreshButton = document.getElementById('refreshOrdersBtn');
+  if (refreshButton) {
+    refreshButton.disabled = true;
+    refreshButton.textContent = '⏳ جاري التحديث...';
+  }
   try {
     const { data } = await fetchAdminJson('/api/orders');
     if (data.success && Array.isArray(data.orders)) {
@@ -423,6 +428,10 @@ async function loadOrders() {
   renderMetrics();
   renderStockAndPipeline();
   renderOrdersTable();
+  if (refreshButton) {
+    refreshButton.disabled = false;
+    refreshButton.textContent = '🔄 تحديث الطلبات';
+  }
 }
 
 function renderMetrics() {
@@ -995,6 +1004,9 @@ window.switchTableTab = function(tabName) {
 // ======================================================
 function initEventListeners() {
   // Orders Search & Filter
+  const refreshOrdersButton = document.getElementById('refreshOrdersBtn');
+  if (refreshOrdersButton) refreshOrdersButton.addEventListener('click', loadOrders);
+
   const searchInput = document.getElementById("tableSearch");
   if (searchInput) {
     searchInput.addEventListener("input", (e) => {
