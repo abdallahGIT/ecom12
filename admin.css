@@ -614,6 +614,9 @@ body {
 
 .excel-table tr:hover td { background: #F8FAFC; }
 .excel-table tbody tr { height: 54px; }
+.excel-table tbody tr.order-row-visible { display: table-row; visibility: visible; opacity: 1; }
+.excel-table tbody tr.order-row-visible td:first-child { border-right: 3px solid transparent; }
+.excel-table tbody tr.order-row-visible:hover td:first-child { border-right-color: var(--green); }
 
 /* Status Badges */
 .status-badge {

@@ -434,6 +434,15 @@ async function loadOrders() {
   }
 }
 
+function resetOrderViewFilters() {
+  activeFilter = 'all';
+  searchQuery = '';
+  const statusFilter = document.getElementById('statusFilter');
+  const searchInput = document.getElementById('tableSearch');
+  if (statusFilter) statusFilter.value = 'all';
+  if (searchInput) searchInput.value = '';
+}
+
 function renderMetrics() {
   const total = currentOrders.length;
   const confirmed = currentOrders.filter(o => o.status === "confirmed").length;
@@ -563,7 +572,11 @@ function renderOrdersTable() {
   });
 
   const countLabel = document.getElementById("tableCountLabel");
-  if (countLabel) countLabel.textContent = filtered.length;
+  if (countLabel) {
+    countLabel.textContent = filtered.length === currentOrders.length
+      ? String(filtered.length)
+      : `${filtered.length} من ${currentOrders.length}`;
+  }
 
   if (filtered.length === 0) {
     tbody.innerHTML = `
@@ -578,6 +591,8 @@ function renderOrdersTable() {
 
   filtered.forEach((o, index) => {
     const tr = document.createElement("tr");
+    tr.className = 'order-row-visible';
+    tr.dataset.orderId = String(o.id || '');
 
     const statusMap = {
       new: { label: "جديد ⏳", class: "new" },
@@ -1005,7 +1020,10 @@ window.switchTableTab = function(tabName) {
 function initEventListeners() {
   // Orders Search & Filter
   const refreshOrdersButton = document.getElementById('refreshOrdersBtn');
-  if (refreshOrdersButton) refreshOrdersButton.addEventListener('click', loadOrders);
+  if (refreshOrdersButton) refreshOrdersButton.addEventListener('click', async () => {
+    resetOrderViewFilters();
+    await loadOrders();
+  });
 
   const searchInput = document.getElementById("tableSearch");
   if (searchInput) {
