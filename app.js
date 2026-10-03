@@ -5,7 +5,7 @@
 // ======================================================
 
 let currentProduct = null;
-let selectedQty = 2; // Default to 2 packs
+let selectedQty = 1; // Default to 1 pack
 let sessionToken = null;
 let leadCaptureTimer = null;
 let deliveryFees = {};
@@ -551,7 +551,7 @@ function initOfferSelector() {
   });
 
   // Initial set
-  setOffer(2);
+  setOffer(1);
 }
 
 // ======================================================
