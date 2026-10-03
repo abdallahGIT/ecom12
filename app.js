@@ -838,8 +838,21 @@ function initOrderForm() {
       if (!resp.ok || !data.success || !data.order?.id) {
         throw new Error(data.error || 'تعذر حفظ الطلب. يرجى المحاولة مرة أخرى.');
       }
-      newOrder.id = data.order.id;
-      newOrder.deliveryFeePending = Boolean(data.order.delivery_fee_pending);
+      // The database response is authoritative for the confirmation view.
+      // PostgreSQL returns snake_case columns; accept both shapes for compatibility.
+      const savedOrder = data.order;
+      newOrder = {
+        ...newOrder,
+        id: savedOrder.id,
+        fullName: savedOrder.full_name ?? savedOrder.fullName ?? newOrder.fullName,
+        phone: savedOrder.phone ?? newOrder.phone,
+        willaya: savedOrder.willaya ?? savedOrder.wilaya ?? newOrder.willaya,
+        baladia: savedOrder.baladia ?? newOrder.baladia,
+        quantity: Number(savedOrder.quantity ?? newOrder.quantity),
+        price: Number(savedOrder.price ?? newOrder.price),
+        deliveryFee: Number(savedOrder.delivery_fee ?? savedOrder.deliveryFee ?? newOrder.deliveryFee) || 0,
+        deliveryFeePending: Boolean(savedOrder.delivery_fee_pending ?? savedOrder.deliveryFeePending)
+      };
     } catch (err) {
       console.error("Order could not be saved:", err);
       submitBtn.disabled = false;
@@ -859,8 +872,8 @@ function initOrderForm() {
 
     // 6. Display Confirmation Modal
     document.getElementById("modalOrderId").textContent = newOrder.id;
-    document.getElementById("modalOrderDetails").textContent = 
-      `${fullName} · ${wilayaObj ? wilayaObj.name : ''} (${baladia}) · ${selectedQty} علب · ${newOrder.deliveryFeePending ? `${offer.price} ${APP_CONFIG.currency} + رسوم التوصيل تؤكد هاتفياً` : `${pricing.total} ${APP_CONFIG.currency}`}`;
+    document.getElementById("modalOrderDetails").textContent =
+      `${newOrder.fullName} · ${newOrder.willaya || ''} (${newOrder.baladia || ''}) · ${newOrder.quantity} علب · ${newOrder.deliveryFeePending ? `${newOrder.price} ${APP_CONFIG.currency} + رسوم التوصيل تؤكد هاتفياً` : `${(newOrder.price + newOrder.deliveryFee).toLocaleString('fr-FR')} ${APP_CONFIG.currency}`}`;
 
     modal.classList.add("active");
 

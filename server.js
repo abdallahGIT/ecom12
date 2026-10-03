@@ -732,6 +732,7 @@ app.get('/api/orders', async (req, res) => {
     query += ' ORDER BY created_at DESC;';
 
     const result = await pool.query(query, params);
+    res.set('Cache-Control', 'no-store');
     res.json({ success: true, orders: result.rows });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

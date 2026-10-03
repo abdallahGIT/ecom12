@@ -386,25 +386,31 @@ async function loadOrders() {
     const { data } = await fetchAdminJson('/api/orders');
     if (data.success && Array.isArray(data.orders)) {
       ordersLoadError = "";
-      currentOrders = data.orders.map(o => ({
-        id: o.id,
-        fullName: o.full_name,
-        phone: o.phone,
-        willaya: o.willaya,
-        baladia: o.baladia,
-        quantity: o.quantity,
-        price: o.price,
-        deliveryFee: Number(o.delivery_fee) || 0,
-        deliveryFeePending: Boolean(o.delivery_fee_pending),
-        productName: o.product_name,
-        status: o.status,
-        deliveryType: o.delivery_type || 'home',
-        ecotrackTracking: o.ecotrack_tracking || '',
-        ecotrackStatus: o.ecotrack_status || '',
-        ecotrackReturnStatus: o.ecotrack_return_status || '',
-        note: o.note,
-        createdAt: o.created_at ? new Date(o.created_at).toLocaleString("fr-FR", { hour12: false }) : '-'
-      }));
+      currentOrders = data.orders.map(o => {
+        const fullName = o.full_name ?? o.fullName ?? '';
+        const phone = o.phone ?? '';
+        return {
+          id: o.id,
+          fullName,
+          phone,
+          willaya: o.willaya ?? o.wilaya ?? '',
+          baladia: o.baladia ?? '',
+          quantity: Number(o.quantity) || 1,
+          price: Number(o.price) || 0,
+          deliveryFee: Number(o.delivery_fee ?? o.deliveryFee) || 0,
+          deliveryFeePending: Boolean(o.delivery_fee_pending ?? o.deliveryFeePending),
+          productName: o.product_name ?? o.productName ?? '',
+          status: o.status || 'new',
+          deliveryType: o.delivery_type ?? o.deliveryType ?? 'home',
+          ecotrackTracking: o.ecotrack_tracking ?? o.ecotrackTracking ?? '',
+          ecotrackStatus: o.ecotrack_status ?? o.ecotrackStatus ?? '',
+          ecotrackReturnStatus: o.ecotrack_return_status ?? o.ecotrackReturnStatus ?? '',
+          note: o.note ?? '',
+          createdAt: o.created_at || o.createdAt
+            ? new Date(o.created_at || o.createdAt).toLocaleString("fr-FR", { hour12: false })
+            : '-'
+        };
+      });
     } else {
       throw new Error(data.error || 'استجابة الطلبات غير صالحة');
     }
