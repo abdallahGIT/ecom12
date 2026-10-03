@@ -32,7 +32,6 @@ let pixelPurchaseIntentKey = '';
 let pixelPurchaseEventId = '';
 let pixelReady = false;
 let pixelInitializationFinished = false; // Pixel ID resolved + fbq('init') queued (NOT "fbevents.js loaded")
-let pixelProductIdentityReady = false;  // product lookup settled (or 3s cap) so content_ids are final
 const pendingPixelEvents = [];
 
 async function initializePixel() {
@@ -77,25 +76,19 @@ function sendPixelEvent(eventName, params, options) {
 }
 
 function flushPixelEvents() {
-  if (!pixelInitializationFinished || !pixelProductIdentityReady) return;
+  if (!pixelInitializationFinished) return;
   while (pendingPixelEvents.length) {
     const { eventName, params, options } = pendingPixelEvents.shift();
     sendPixelEvent(eventName, params, options);
   }
 }
 
-// params may be an object or a function; a function is evaluated at send time so that
-// content_ids always reflect the final product identity.
+// params may be an object or a function; events never wait for product or checkout APIs.
 function trackPixelEvent(eventName, params, options = {}) {
   pendingPixelEvents.push({ eventName, params, options });
   flushPixelEvents();
 }
 
-// Product lookup is allowed to settle for at most 3s so tracking never depends on the API.
-let resolveProductIdentity;
-const productIdentityReady = new Promise(resolve => { resolveProductIdentity = resolve; });
-productIdentityReady.then(() => { pixelProductIdentityReady = true; flushPixelEvents(); });
-window.setTimeout(() => resolveProductIdentity(), 3000);
 window.pixelDiagnostics = () => APP_CONFIG.pixel.diagnostics();
 
 function getPixelContentId() {
@@ -171,13 +164,12 @@ document.addEventListener("DOMContentLoaded", () => {
   // Data pipeline: enrich the already-live form independently in the background.
   const productReady = loadActiveProduct();
   const checkoutDataReady = Promise.all([loadDeliveryFees(), loadShippingWilayas()]);
-  // ViewContent depends only on the product identity (settled or capped at 3s), never on
-  // delivery-fee / wilaya APIs.
-  productIdentityReady.then(() => trackPixelEvent('ViewContent', () => ({
+  // ViewContent fires as soon as the page content is visible; product APIs may enrich later.
+  trackPixelEvent('ViewContent', () => ({
     content_ids: [getPixelContentId()],
     content_type: 'product',
     content_name: currentProduct ? currentProduct.name : APP_CONFIG.product.name
-  })));
+  }));
   Promise.all([productReady, checkoutDataReady])
     .then(() => triggerAutoLeadCapture())
     .catch(err => console.warn('Background storefront data loading failed:', err));
@@ -704,9 +696,14 @@ function initPixelLeadTracking() {
     }));
   };
 
-  // Meta Lead is a manual phone-completion event only. Do not fire on load,
-  // focus, blur, change, pageshow, autofill, or restored form values.
+  // Lead is emitted whenever the phone constraint becomes valid, including
+  // browser autofill/restored values, but only once per normalized phone/session.
   phoneInput.addEventListener('input', captureLeadPixel);
+  phoneInput.addEventListener('change', captureLeadPixel);
+  phoneInput.addEventListener('blur', captureLeadPixel);
+  phoneInput.addEventListener('focus', () => setTimeout(captureLeadPixel, 0));
+  window.addEventListener('pageshow', captureLeadPixel);
+  captureLeadPixel();
 }
 
 // ======================================================
@@ -716,8 +713,19 @@ function initOrderForm() {
   const form = document.getElementById("kakiOrderForm");
   const modal = document.getElementById("successModal");
   const modalClose = document.getElementById("modalCloseBtn");
+  const submitBtn = document.getElementById("submitOrderBtn");
 
   if (!form) return;
+
+  const updateSubmitState = () => {
+    const phone = normalizeAlgerianPhone(document.getElementById("phone")?.value || "");
+    const willayaId = parseInt(document.getElementById("willayaSelect")?.value || "", 10);
+    const baladia = String(document.getElementById("baladiaSelect")?.value || "").trim();
+    if (submitBtn) submitBtn.disabled = !isValidAlgerianPhone(phone) || !willayaId || !baladia;
+  };
+  form.addEventListener('input', updateSubmitState);
+  form.addEventListener('change', updateSubmitState);
+  updateSubmitState();
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -786,7 +794,6 @@ function initOrderForm() {
       }), { eventID: pixelPurchaseEventId });
     }
 
-    const submitBtn = document.getElementById("submitOrderBtn");
     submitBtn.disabled = true;
     submitBtn.innerHTML = `<span>جاري التأكيد...</span>`;
 
