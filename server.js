@@ -5,6 +5,11 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const { Pool } = require('pg');
+
+// Node does not load .env files automatically; do so before reading DATABASE_URL.
+// In Vercel/production the process environment remains authoritative.
+try { process.loadEnvFile(); } catch { /* .env is optional in deployed environments */ }
+
 const {
   getSettings: getEcoTrackSettings,
   validateToken: validateEcoTrackToken,
@@ -686,16 +691,14 @@ app.delete('/api/products/:id', async (req, res) => {
 
     client = await pool.connect();
     await client.query('BEGIN');
-    const existing = await client.query('SELECT id FROM products WHERE id = $1 FOR UPDATE;', [id]);
-    if (!existing.rows[0]) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ success: false, error: 'المنتج غير موجود' });
-    }
-
     // Preserve historical orders and leads if an older Neon schema has a restrictive FK.
     await client.query('UPDATE orders SET product_id = NULL WHERE product_id = $1;', [id]);
     await client.query('UPDATE leads SET product_id = NULL WHERE product_id = $1;', [id]);
-    await client.query('DELETE FROM products WHERE id = $1;', [id]);
+    const deleted = await client.query('DELETE FROM products WHERE id = $1 RETURNING id;', [id]);
+    if (!deleted.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, error: 'المنتج غير موجود' });
+    }
     await client.query('COMMIT');
     res.json({ success: true, message: 'تم حذف المنتج بنجاح' });
   } catch (err) {
@@ -703,7 +706,11 @@ app.delete('/api/products/:id', async (req, res) => {
       try { await client.query('ROLLBACK'); } catch {}
     }
     console.error('Error deleting product:', err);
-    res.status(500).json({ success: false, error: err.message });
+    const foreignKeyFailure = err.code === '23503';
+    res.status(foreignKeyFailure ? 409 : 500).json({
+      success: false,
+      error: foreignKeyFailure ? 'لا يمكن حذف المنتج لأنه مرتبط بسجلات أخرى' : err.message
+    });
   } finally {
     if (client) client.release();
   }

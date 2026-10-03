@@ -1,5 +1,5 @@
 // ======================================================
-// KAKI SEEDS & STOREFRONT LOGIC
+// DATABASE-BACKED STOREFRONT LOGIC
 // Dynamic Products, Image Slider, Wilaya Selector,
 // Automatic Lead Capture (Drafts) & Order Submission
 // ======================================================
@@ -33,6 +33,10 @@ let pixelPurchaseEventId = '';
 let pixelReady = false;
 let pixelInitializationFinished = false; // Pixel ID resolved + fbq('init') queued (NOT "fbevents.js loaded")
 const pendingPixelEvents = [];
+
+function getProductName() {
+  return currentProduct?.name || '';
+}
 
 async function initializePixel() {
   try {
@@ -168,7 +172,7 @@ document.addEventListener("DOMContentLoaded", () => {
   trackPixelEvent('ViewContent', () => ({
     content_ids: [getPixelContentId()],
     content_type: 'product',
-    content_name: currentProduct ? currentProduct.name : APP_CONFIG.product.name
+    content_name: getProductName()
   }));
   Promise.all([productReady, checkoutDataReady])
     .then(() => triggerAutoLeadCapture())
@@ -288,13 +292,24 @@ async function loadActiveProduct() {
       if (currentProduct) {
         applyProductToUI(currentProduct);
       }
+    } else {
+      showProductUnavailable('لا يوجد منتج نشط حالياً. أضف منتجاً من لوحة الإدارة.');
     }
   } catch (err) {
-    console.warn("Could not fetch active product from DB, using fallback config:", err);
+    console.warn("Could not fetch active product from DB:", err);
+    showProductUnavailable('تعذر تحميل المنتج من قاعدة البيانات. حاول تحديث الصفحة.');
   } finally {
     document.body.classList.remove('product-loading');
     resolveProductIdentity();
   }
+}
+
+function showProductUnavailable(message) {
+  currentProduct = null;
+  const heroTitle = document.querySelector('.hero-title');
+  if (heroTitle) heroTitle.textContent = message;
+  const submitBtn = document.getElementById('submitOrderBtn');
+  if (submitBtn) submitBtn.disabled = true;
 }
 
 function applyProductToUI(product) {
@@ -304,13 +319,13 @@ function applyProductToUI(product) {
   document.title = `${product.name} | اطلب الآن الدفع عند الاستلام`;
 
   // Update Prices in APP_CONFIG
-  if (product.price_1) APP_CONFIG.offers[1].price = product.price_1;
-  if (product.price_2) {
+  if (product.price_1 !== null && product.price_1 !== undefined) APP_CONFIG.offers[1].price = product.price_1;
+  if (product.price_2 !== null && product.price_2 !== undefined) {
     APP_CONFIG.offers[2].price = product.price_2;
     APP_CONFIG.offers[2].oldPrice = product.price_1 * 2;
     APP_CONFIG.offers[2].save = (product.price_1 * 2) - product.price_2;
   }
-  if (product.price_3) {
+  if (product.price_3 !== null && product.price_3 !== undefined) {
     APP_CONFIG.offers[3].price = product.price_3;
     APP_CONFIG.offers[3].oldPrice = product.price_1 * 3;
     APP_CONFIG.offers[3].save = (product.price_1 * 3) - product.price_3;
@@ -323,11 +338,11 @@ function applyProductToUI(product) {
   const offer3Price = document.querySelector('.offer-option[data-qty="3"] .offer-price');
   const offer3Save = document.querySelector('.offer-option[data-qty="3"] .offer-save');
 
-  if (offer1Price) offer1Price.textContent = `${APP_CONFIG.offers[1].price.toLocaleString("fr-FR")} د.ج`;
-  if (offer2Price) offer2Price.textContent = `${APP_CONFIG.offers[2].price.toLocaleString("fr-FR")} د.ج`;
-  if (offer2Save && APP_CONFIG.offers[2].save > 0) offer2Save.textContent = `وفّر ${APP_CONFIG.offers[2].save.toLocaleString("fr-FR")} د.ج`;
-  if (offer3Price) offer3Price.textContent = `${APP_CONFIG.offers[3].price.toLocaleString("fr-FR")} د.ج`;
-  if (offer3Save && APP_CONFIG.offers[3].save > 0) offer3Save.textContent = `وفّر ${APP_CONFIG.offers[3].save.toLocaleString("fr-FR")} د.ج`;
+  if (offer1Price) offer1Price.textContent = `${Number(APP_CONFIG.offers[1].price).toLocaleString("fr-FR")} ${APP_CONFIG.currency}`;
+  if (offer2Price) offer2Price.textContent = `${Number(APP_CONFIG.offers[2].price).toLocaleString("fr-FR")} ${APP_CONFIG.currency}`;
+  if (offer2Save) offer2Save.textContent = APP_CONFIG.offers[2].save > 0 ? `وفّر ${APP_CONFIG.offers[2].save.toLocaleString("fr-FR")} ${APP_CONFIG.currency}` : '';
+  if (offer3Price) offer3Price.textContent = `${Number(APP_CONFIG.offers[3].price).toLocaleString("fr-FR")} ${APP_CONFIG.currency}`;
+  if (offer3Save) offer3Save.textContent = APP_CONFIG.offers[3].save > 0 ? `وفّر ${APP_CONFIG.offers[3].save.toLocaleString("fr-FR")} ${APP_CONFIG.currency}` : '';
 
   // Update Images Slider if product has custom images
   let images = [];
@@ -486,9 +501,9 @@ function updateTotalPrice() {
   const deliveryFeeDisplay = document.getElementById('deliveryFeeDisplay');
   const total = offer.price + (deliveryFee ?? 0);
 
-  if (totalPriceDisplay) totalPriceDisplay.textContent = `${total.toLocaleString('fr-FR')} ${APP_CONFIG.product.currency}`;
+  if (totalPriceDisplay) totalPriceDisplay.textContent = `${total.toLocaleString('fr-FR')} ${APP_CONFIG.currency}`;
   if (oldPriceDisplay && offer.oldPrice) {
-    oldPriceDisplay.textContent = `${(offer.oldPrice + (deliveryFee ?? 0)).toLocaleString('fr-FR')} ${APP_CONFIG.product.currency}`;
+    oldPriceDisplay.textContent = `${(offer.oldPrice + (deliveryFee ?? 0)).toLocaleString('fr-FR')} ${APP_CONFIG.currency}`;
   }
   if (deliveryFeeDisplay) {
     const wilayaSelect = document.getElementById('willayaSelect');
@@ -496,7 +511,7 @@ function updateTotalPrice() {
     else if (deliveryFeesLoading) deliveryFeeDisplay.textContent = 'جار تحميل تسعيرة التوصيل...';
     else if (!deliveryFeesReady) deliveryFeeDisplay.textContent = 'سيتم تأكيد رسوم التوصيل هاتفياً';
     else if (deliveryFee === null) deliveryFeeDisplay.textContent = 'سيتم تأكيد رسوم التوصيل هاتفياً';
-    else deliveryFeeDisplay.textContent = `رسوم التوصيل${deliveryProvider ? ` (${deliveryProvider})` : ''}: ${deliveryFee.toLocaleString('fr-FR')} ${APP_CONFIG.product.currency}`;
+    else deliveryFeeDisplay.textContent = `رسوم التوصيل${deliveryProvider ? ` (${deliveryProvider})` : ''}: ${deliveryFee.toLocaleString('fr-FR')} ${APP_CONFIG.currency}`;
   }
   return { productPrice: offer.price, deliveryFee, total };
 }
@@ -594,7 +609,7 @@ async function triggerAutoLeadCapture() {
 
   const offer = APP_CONFIG.offers[selectedQty] || APP_CONFIG.offers[1];
   const deliveryFee = getSelectedDeliveryFee();
-  const prodName = currentProduct ? currentProduct.name : APP_CONFIG.product.name;
+  const prodName = getProductName();
   const prodId = currentProduct ? currentProduct.id : null;
 
   const payload = {
@@ -664,7 +679,7 @@ function initPixelInitiateCheckout() {
     trackPixelEvent('InitiateCheckout', () => ({
       content_ids: [getPixelContentId()],
       content_type: 'product',
-      content_name: currentProduct ? currentProduct.name : APP_CONFIG.product.name,
+      content_name: getProductName(),
       num_items: qty
     }));
   };
@@ -690,7 +705,7 @@ function initPixelLeadTracking() {
     trackPixelEvent('Lead', () => ({
       content_ids: [getPixelContentId()],
       content_type: 'product',
-      content_name: currentProduct ? currentProduct.name : APP_CONFIG.product.name,
+      content_name: getProductName(),
       num_items: qty,
       lead_source: 'valid_phone_input'
     }));
@@ -721,7 +736,7 @@ function initOrderForm() {
     const phone = normalizeAlgerianPhone(document.getElementById("phone")?.value || "");
     const willayaId = parseInt(document.getElementById("willayaSelect")?.value || "", 10);
     const baladia = String(document.getElementById("baladiaSelect")?.value || "").trim();
-    if (submitBtn) submitBtn.disabled = !isValidAlgerianPhone(phone) || !willayaId || !baladia;
+    if (submitBtn) submitBtn.disabled = !currentProduct || !isValidAlgerianPhone(phone) || !willayaId || !baladia;
   };
   form.addEventListener('input', updateSubmitState);
   form.addEventListener('change', updateSubmitState);
@@ -761,7 +776,7 @@ function initOrderForm() {
     const wilayaObj = shippingWilayas.find(w => w.id === willayaId);
     const offer = APP_CONFIG.offers[selectedQty] || APP_CONFIG.offers[1];
     const pricing = updateTotalPrice();
-    const prodName = currentProduct ? currentProduct.name : APP_CONFIG.product.name;
+    const prodName = getProductName();
     const prodId = currentProduct ? currentProduct.id : null;
 
     // Purchase means a fully validated order intent. It is emitted before any
@@ -845,7 +860,7 @@ function initOrderForm() {
     // 6. Display Confirmation Modal
     document.getElementById("modalOrderId").textContent = newOrder.id;
     document.getElementById("modalOrderDetails").textContent = 
-      `${fullName} · ${wilayaObj ? wilayaObj.name : ''} (${baladia}) · ${selectedQty} علب · ${newOrder.deliveryFeePending ? `${offer.price} ${APP_CONFIG.product.currency} + رسوم التوصيل تؤكد هاتفياً` : `${pricing.total} ${APP_CONFIG.product.currency}`}`;
+      `${fullName} · ${wilayaObj ? wilayaObj.name : ''} (${baladia}) · ${selectedQty} علب · ${newOrder.deliveryFeePending ? `${offer.price} ${APP_CONFIG.currency} + رسوم التوصيل تؤكد هاتفياً` : `${pricing.total} ${APP_CONFIG.currency}`}`;
 
     modal.classList.add("active");
 
@@ -882,7 +897,7 @@ function initSmoothScroll() {
       trackPixelEvent('AddToCart', () => ({
         content_ids: [getPixelContentId()],
         content_type: 'product',
-        content_name: currentProduct ? currentProduct.name : APP_CONFIG.product.name,
+        content_name: getProductName(),
         num_items: selectedQty
       }));
       orderSection.scrollIntoView({ behavior: "smooth" });
