@@ -117,14 +117,10 @@ body {
 .slider-wrapper {
   position: relative;
   width: 100%;
-  max-width: min(340px, 44vh, 100%);
+  max-width: 100%;
   margin: 0 auto;
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-  background: var(--grey-light);
-  border: 1px solid var(--grey-border);
-  box-shadow: var(--shadow-subtle);
-  aspect-ratio: 1 / 1;
+  overflow: visible;
+  background: transparent;
   touch-action: pan-y pinch-zoom;
 }
 
@@ -133,7 +129,7 @@ body {
 .slider-track {
   display: flex;
   width: 100%;
-  height: 100%;
+  height: auto;
   transition: transform 0.35s cubic-bezier(0.2, 0.9, 0.3, 1);
   direction: ltr; /* Keeps translation calculations mathematically clean */
 }
@@ -141,15 +137,15 @@ body {
 .slide {
   flex: 0 0 100%;
   width: 100%;
-  height: 100%;
+  height: auto;
   position: relative;
   user-select: none;
 }
 
 .slide img {
   width: 100%;
-  height: 100%;
-  object-fit: cover;
+  height: auto;
+  object-fit: contain;
   display: block;
   pointer-events: none;
 }

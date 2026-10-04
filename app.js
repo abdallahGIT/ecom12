@@ -296,7 +296,7 @@ async function loadActiveProduct() {
       showProductUnavailable('لا يوجد منتج نشط حالياً. أضف منتجاً من لوحة الإدارة.');
     }
   } catch (err) {
-    console.warn("Could not fetch active product from DB:", err);
+    console.warn('Could not load the active product:', err);
     showProductUnavailable('تعذر تحميل المنتج. حاول تحديث الصفحة.');
   } finally {
     document.body.classList.remove('product-loading');
