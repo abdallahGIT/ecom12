@@ -355,6 +355,14 @@ function applyProductToUI(product) {
   if (Array.isArray(images) && images.length > 0) {
     const track = document.getElementById("sliderTrack");
     const dotsContainer = document.getElementById("sliderDots");
+    const prevButton = document.getElementById("sliderPrev");
+    const nextButton = document.getElementById("sliderNext");
+    const hasMultipleImages = images.length > 1;
+
+    [prevButton, nextButton].forEach(button => {
+      if (button) button.hidden = !hasMultipleImages;
+    });
+    if (dotsContainer) dotsContainer.hidden = !hasMultipleImages;
 
     if (track && dotsContainer) {
       track.innerHTML = "";
