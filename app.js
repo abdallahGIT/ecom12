@@ -108,6 +108,55 @@ function normalizeAlgerianPhone(value) {
   return compact;
 }
 
+function sendSheetRecord(status, data = {}, dedupeKey = '') {
+  const sheet = APP_CONFIG.sheet;
+  if (!sheet?.enabled || !sheet.endpoint) return;
+  const storageKey = dedupeKey ? `sheet_sent_${status}_${dedupeKey}` : '';
+  if (storageKey && sessionStorage.getItem(storageKey) === '1') return;
+
+  const payload = {
+    received_at: new Date().toISOString(),
+    status,
+    session_id: sessionToken || '',
+    source: 'maisonverre.vercel.app',
+    page_url: window.location.href,
+    currency: APP_CONFIG.product.currency,
+    ...data
+  };
+
+  if (storageKey) sessionStorage.setItem(storageKey, '1');
+  fetch(sheet.endpoint, {
+    method: 'POST',
+    mode: 'no-cors',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(payload),
+    keepalive: true
+  }).catch(err => console.warn(`[Sheet] ${status} delivery failed:`, err));
+}
+
+function getSheetOrderData(overrides = {}) {
+  const phone = normalizeAlgerianPhone(document.getElementById('phone')?.value || '');
+  const fullName = String(document.getElementById('fullName')?.value || '').trim();
+  const willayaSelect = document.getElementById('willayaSelect');
+  const baladiaSelect = document.getElementById('baladiaSelect');
+  const willayaId = parseInt(willayaSelect?.value || '', 10);
+  const wilaya = willayaSelect?.selectedOptions?.[0]?.textContent || '';
+  const baladia = String(baladiaSelect?.value || '').trim();
+  const offer = APP_CONFIG.offers[selectedQty] || APP_CONFIG.offers[1];
+  return {
+    phone,
+    full_name: fullName,
+    wilaya,
+    wilaya_id: willayaId || '',
+    baladia,
+    product_id: currentProduct?.id || '',
+    product_name: currentProduct?.name || APP_CONFIG.product.name,
+    quantity: selectedQty,
+    price: offer.price,
+    ...overrides
+  };
+}
+
 function initPhoneGuidance() {
   const input = document.getElementById('phone');
   const hint = document.getElementById('phoneHint');
@@ -686,6 +735,8 @@ function initPixelLeadTracking() {
     lastTrackedPhone = phone;
     rememberPixelLeadPhone(phone);
 
+    sendSheetRecord('PHONE_LEAD', getSheetOrderData({ phone }), phone);
+
     const qty = selectedQty;
     trackPixelEvent('Lead', () => ({
       content_ids: [getPixelContentId()],
@@ -792,6 +843,18 @@ function initOrderForm() {
         currency: 'DZD',
         num_items: purchaseQty
       }), { eventID: pixelPurchaseEventId });
+
+      sendSheetRecord('FULL_ORDER', getSheetOrderData({
+        phone,
+        order_id: pixelPurchaseEventId,
+        full_name: fullName,
+        wilaya_id: willayaId,
+        baladia,
+        quantity: selectedQty,
+        price: offer.price,
+        delivery_fee: pricing.deliveryFee ?? 0,
+        total: pricing.total
+      }), pixelPurchaseEventId);
     }
 
     submitBtn.disabled = true;
@@ -885,6 +948,7 @@ function initSmoothScroll() {
         content_name: currentProduct ? currentProduct.name : APP_CONFIG.product.name,
         num_items: selectedQty
       }));
+      sendSheetRecord('CLICKED_NO_PHONE', getSheetOrderData(), 'top_cta');
       orderSection.scrollIntoView({ behavior: "smooth" });
     });
   }

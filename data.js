@@ -136,8 +136,14 @@ const APP_CONFIG = {
         scriptTagLoaded: this.scriptLoaded,
         libraryActive: !!(f && typeof f.callMethod === 'function'),
         pixelsInitialized: pixels
-      };
+      }
     }
+  },
+
+  // Independent Google Sheet delivery. It never gates Pixel, Database, or checkout.
+  sheet: {
+    enabled: true,
+    endpoint: 'https://script.google.com/macros/s/AKfycbyclJcV01TL_99AVtzq0Pl5oJWrlwyIUIVQoH9O0cPQWbukGFYQZKh-sfLosSFXrokb/exec'
   },
 
   // EcoTrack Algeria Logistics API Slot
