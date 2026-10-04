@@ -11,6 +11,7 @@ let searchQuery = "";
 let leadsSearchQuery = "";
 let currentTableTab = "orders";
 let currentProductImages = []; // Array of image URLs for the modal
+const deletingProductIds = new Set();
 let productsLoadError = "";
 let ordersLoadError = "";
 let leadsLoadError = "";
@@ -190,7 +191,7 @@ function renderProductsGrid() {
           <div class="prod-actions">
             <a class="btn-tbl" href="${escapeHtml(productUrl)}" target="_blank" rel="noopener" title="فتح المنتج في المتجر">🔗 فتح الرابط</a>
             <button class="btn-tbl edit-btn" onclick="openEditProductModal(${Number(prod.id)})" title="تعديل المنتج">✏️ تعديل</button>
-            <button type="button" class="btn-tbl delete" onclick="handleDeleteProduct(${Number(prod.id)})" title="حذف المنتج">🗑️</button>
+            <button type="button" class="btn-tbl delete" onclick="handleDeleteProduct(${Number(prod.id)}, this)" title="حذف المنتج">🗑️</button>
           </div>
         </div>
       </div>
@@ -354,9 +355,16 @@ async function handlePhotoFilesUpload(files) {
   }
 }
 
-window.handleDeleteProduct = async function(productId) {
+window.handleDeleteProduct = async function(productId, button) {
+  const normalizedId = String(productId);
+  if (deletingProductIds.has(normalizedId)) return;
   const productName = currentProducts.find(product => String(product.id) === String(productId))?.name || `رقم ${productId}`;
   if (confirm(`هل أنت متأكد من حذف المنتج "${productName}" نهائياً من قاعدة بيانات Neon؟`)) {
+    deletingProductIds.add(normalizedId);
+    if (button) {
+      button.disabled = true;
+      button.textContent = '⏳';
+    }
     try {
       const { data } = await fetchAdminJson(`/api/products/${encodeURIComponent(productId)}`, { method: 'DELETE' });
       if (!data.success) throw new Error(data.error || 'تعذر حذف المنتج');
@@ -364,6 +372,8 @@ window.handleDeleteProduct = async function(productId) {
       await checkDbHealth();
     } catch (err) {
       alert(err.message || 'فشل الاتصال بالسيرفر. لم يتم حذف المنتج.');
+    } finally {
+      deletingProductIds.delete(normalizedId);
     }
   }
 };
@@ -372,29 +382,40 @@ window.handleDeleteProduct = async function(productId) {
 // 3. ORDERS MANAGEMENT (NEON DB)
 // ======================================================
 async function loadOrders() {
+  const refreshButton = document.getElementById('refreshOrdersBtn');
+  if (refreshButton) {
+    refreshButton.disabled = true;
+    refreshButton.textContent = '⏳ جاري التحديث...';
+  }
   try {
     const { data } = await fetchAdminJson('/api/orders');
     if (data.success && Array.isArray(data.orders)) {
       ordersLoadError = "";
-      currentOrders = data.orders.map(o => ({
-        id: o.id,
-        fullName: o.full_name,
-        phone: o.phone,
-        willaya: o.willaya,
-        baladia: o.baladia,
-        quantity: o.quantity,
-        price: o.price,
-        deliveryFee: Number(o.delivery_fee) || 0,
-        deliveryFeePending: Boolean(o.delivery_fee_pending),
-        productName: o.product_name,
-        status: o.status,
-        deliveryType: o.delivery_type || 'home',
-        ecotrackTracking: o.ecotrack_tracking || '',
-        ecotrackStatus: o.ecotrack_status || '',
-        ecotrackReturnStatus: o.ecotrack_return_status || '',
-        note: o.note,
-        createdAt: o.created_at ? new Date(o.created_at).toLocaleString("fr-FR", { hour12: false }) : '-'
-      }));
+      currentOrders = data.orders.map(o => {
+        const fullName = o.full_name ?? o.fullName ?? '';
+        const phone = o.phone ?? '';
+        return {
+          id: o.id,
+          fullName,
+          phone,
+          willaya: o.willaya ?? o.wilaya ?? '',
+          baladia: o.baladia ?? '',
+          quantity: Number(o.quantity) || 1,
+          price: Number(o.price) || 0,
+          deliveryFee: Number(o.delivery_fee ?? o.deliveryFee) || 0,
+          deliveryFeePending: Boolean(o.delivery_fee_pending ?? o.deliveryFeePending),
+          productName: o.product_name ?? o.productName ?? '',
+          status: o.status || 'new',
+          deliveryType: o.delivery_type ?? o.deliveryType ?? 'home',
+          ecotrackTracking: o.ecotrack_tracking ?? o.ecotrackTracking ?? '',
+          ecotrackStatus: o.ecotrack_status ?? o.ecotrackStatus ?? '',
+          ecotrackReturnStatus: o.ecotrack_return_status ?? o.ecotrackReturnStatus ?? '',
+          note: o.note ?? '',
+          createdAt: o.created_at || o.createdAt
+            ? new Date(o.created_at || o.createdAt).toLocaleString("fr-FR", { hour12: false })
+            : '-'
+        };
+      });
     } else {
       throw new Error(data.error || 'استجابة الطلبات غير صالحة');
     }
@@ -407,6 +428,19 @@ async function loadOrders() {
   renderMetrics();
   renderStockAndPipeline();
   renderOrdersTable();
+  if (refreshButton) {
+    refreshButton.disabled = false;
+    refreshButton.textContent = '🔄 تحديث الطلبات';
+  }
+}
+
+function resetOrderViewFilters() {
+  activeFilter = 'all';
+  searchQuery = '';
+  const statusFilter = document.getElementById('statusFilter');
+  const searchInput = document.getElementById('tableSearch');
+  if (statusFilter) statusFilter.value = 'all';
+  if (searchInput) searchInput.value = '';
 }
 
 function renderMetrics() {
@@ -538,7 +572,11 @@ function renderOrdersTable() {
   });
 
   const countLabel = document.getElementById("tableCountLabel");
-  if (countLabel) countLabel.textContent = filtered.length;
+  if (countLabel) {
+    countLabel.textContent = filtered.length === currentOrders.length
+      ? String(filtered.length)
+      : `${filtered.length} من ${currentOrders.length}`;
+  }
 
   if (filtered.length === 0) {
     tbody.innerHTML = `
@@ -553,6 +591,8 @@ function renderOrdersTable() {
 
   filtered.forEach((o, index) => {
     const tr = document.createElement("tr");
+    tr.className = 'order-row-visible';
+    tr.dataset.orderId = String(o.id || '');
 
     const statusMap = {
       new: { label: "جديد ⏳", class: "new" },
@@ -979,6 +1019,12 @@ window.switchTableTab = function(tabName) {
 // ======================================================
 function initEventListeners() {
   // Orders Search & Filter
+  const refreshOrdersButton = document.getElementById('refreshOrdersBtn');
+  if (refreshOrdersButton) refreshOrdersButton.addEventListener('click', async () => {
+    resetOrderViewFilters();
+    await loadOrders();
+  });
+
   const searchInput = document.getElementById("tableSearch");
   if (searchInput) {
     searchInput.addEventListener("input", (e) => {

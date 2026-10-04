@@ -5,6 +5,11 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const { Pool } = require('pg');
+
+// Node does not load .env files automatically; do so before reading DATABASE_URL.
+// In Vercel/production the process environment remains authoritative.
+try { process.loadEnvFile(); } catch { /* .env is optional in deployed environments */ }
+
 const {
   getSettings: getEcoTrackSettings,
   validateToken: validateEcoTrackToken,
@@ -273,6 +278,18 @@ async function initDb() {
            OR images::text LIKE '%assets/lavender.png%';
       `);
 
+      // Lavender was a legacy catalog seed. Remove it from existing databases and
+      // never recreate it; historical orders/leads keep their product name snapshot.
+      await client.query(`
+        UPDATE orders
+        SET product_id = NULL
+        WHERE product_id IN (SELECT id FROM products WHERE slug = 'lavender');
+        UPDATE leads
+        SET product_id = NULL
+        WHERE product_id IN (SELECT id FROM products WHERE slug = 'lavender');
+        DELETE FROM products WHERE slug = 'lavender';
+      `);
+
       // Seed default product if table is empty
       const productCountRes = await client.query('SELECT COUNT(*) FROM products;');
       const count = parseInt(productCountRes.rows[0].count, 10);
@@ -306,33 +323,6 @@ async function initDb() {
           ])
         ]);
       }
-
-      // Keep the new lavender product available without changing existing catalog data.
-      await client.query(`
-        INSERT INTO products (slug, name, subtitle, description, price_1, price_2, price_3, stock, images, features, pixel_id, is_active)
-        VALUES (
-          'lavender',
-          'بذور اللافندر الفاخرة',
-          'رائحة طبيعية فاخرة · زراعة منزلية سهلة · توصيل لكافة الولايات',
-          'بذور اللافندر أو الخزامى للزراعة المنزلية، تمنحك أزهاراً بنفسجية جميلة ورائحة عطرية مميزة مع الدفع عند الاستلام.',
-          1990,
-          3500,
-          4900,
-          50,
-          $1::jsonb,
-          $2::jsonb,
-          '1473661698149519',
-          true
-        )
-        ON CONFLICT (slug) DO NOTHING;
-      `, [
-        JSON.stringify(['assets/lavender.webp']),
-        JSON.stringify([
-          { icon: '💜', label: 'رائحة عطرية فاخرة' },
-          { icon: '🌿', label: 'زراعة منزلية سهلة' },
-          { icon: '📦', label: 'توصيل مضمون' }
-        ])
-      ]);
 
       await client.query('COMMIT');
       console.log('✅ Database schema verified and ready.');
@@ -686,16 +676,14 @@ app.delete('/api/products/:id', async (req, res) => {
 
     client = await pool.connect();
     await client.query('BEGIN');
-    const existing = await client.query('SELECT id FROM products WHERE id = $1 FOR UPDATE;', [id]);
-    if (!existing.rows[0]) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ success: false, error: 'المنتج غير موجود' });
-    }
-
     // Preserve historical orders and leads if an older Neon schema has a restrictive FK.
     await client.query('UPDATE orders SET product_id = NULL WHERE product_id = $1;', [id]);
     await client.query('UPDATE leads SET product_id = NULL WHERE product_id = $1;', [id]);
-    await client.query('DELETE FROM products WHERE id = $1;', [id]);
+    const deleted = await client.query('DELETE FROM products WHERE id = $1 RETURNING id;', [id]);
+    if (!deleted.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, error: 'المنتج غير موجود' });
+    }
     await client.query('COMMIT');
     res.json({ success: true, message: 'تم حذف المنتج بنجاح' });
   } catch (err) {
@@ -703,7 +691,11 @@ app.delete('/api/products/:id', async (req, res) => {
       try { await client.query('ROLLBACK'); } catch {}
     }
     console.error('Error deleting product:', err);
-    res.status(500).json({ success: false, error: err.message });
+    const foreignKeyFailure = err.code === '23503';
+    res.status(foreignKeyFailure ? 409 : 500).json({
+      success: false,
+      error: foreignKeyFailure ? 'لا يمكن حذف المنتج لأنه مرتبط بسجلات أخرى' : err.message
+    });
   } finally {
     if (client) client.release();
   }
@@ -740,6 +732,7 @@ app.get('/api/orders', async (req, res) => {
     query += ' ORDER BY created_at DESC;';
 
     const result = await pool.query(query, params);
+    res.set('Cache-Control', 'no-store');
     res.json({ success: true, orders: result.rows });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

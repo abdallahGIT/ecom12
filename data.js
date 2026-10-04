@@ -2,39 +2,13 @@
 // CONFIGURATION & TRACKING APIS
 // ==========================================
 const APP_CONFIG = {
-  // Product Details
-  product: {
-    name: "بذور الكاكي الفاخرة",
-    subtitle: "أصلية 100% · إنتاجية استثنائية",
-    currency: "د.ج"
-  },
-
-  // Dynamic Pricing Offers (Strictly 1, 2, or 3)
+  // Product identity and prices are loaded exclusively from the database API.
+  // Keep only the offer shape here; never ship catalog values in frontend code.
+  currency: "د.ج",
   offers: {
-    1: {
-      qty: 1,
-      price: 2500,
-      oldPrice: null,
-      save: null,
-      badge: "",
-      isPopular: false
-    },
-    2: {
-      qty: 2,
-      price: 4200,
-      oldPrice: 5000,
-      save: 800,
-      badge: "",
-      isPopular: false
-    },
-    3: {
-      qty: 3,
-      price: 5600,
-      oldPrice: 7500,
-      save: 1900,
-      badge: "",
-      isPopular: false
-    }
+    1: { qty: 1, price: null, oldPrice: null, save: null },
+    2: { qty: 2, price: null, oldPrice: null, save: null },
+    3: { qty: 3, price: null, oldPrice: null, save: null }
   },
 
   // One Meta Pixel for the entire storefront; products are distinguished by content_ids.
@@ -221,109 +195,3 @@ const WILAYAS_DATA = [
   { id: 57, code: "57", name: "57 - عين صالح", baladias: ["عين صالح", "فقارة الزاوية", "إينغر"] },
   { id: 58, code: "58", name: "58 - عين قزام", baladias: ["عين قزام", "تين زواتين"] }
 ];
-
-// ==========================================
-// ORDER STORAGE (LOCALSTORAGE + SYNC)
-// ==========================================
-const ORDERS_STORAGE_KEY = "kaki_orders_v1";
-
-const OrderManager = {
-  getOrders() {
-    const raw = localStorage.getItem(ORDERS_STORAGE_KEY);
-    if (!raw) {
-      // Demo initial orders for Excel/EcoTrack view
-      const initial = [
-        {
-          id: "ORD-1001",
-          createdAt: "2026-09-26 14:20",
-          fullName: "محمد بن علي",
-          phone: "0555123456",
-          willaya: "16 - الجزائر",
-          willayaId: 16,
-          baladia: "حيدرة",
-          quantity: 2,
-          price: 4200,
-          status: "confirmed", // new, confirmed, cancelled, delivered
-          note: "اتصل به بعد 18:00"
-        },
-        {
-          id: "ORD-1002",
-          createdAt: "2026-09-26 15:45",
-          fullName: "أمينة سعدي",
-          phone: "0661987654",
-          willaya: "31 - وهران",
-          willayaId: 31,
-          baladia: "بئر الجير",
-          quantity: 1,
-          price: 2500,
-          status: "new",
-          note: ""
-        },
-        {
-          id: "ORD-1003",
-          createdAt: "2026-09-26 17:10",
-          fullName: "كريم قادري",
-          phone: "0770456123",
-          willaya: "09 - البليدة",
-          willayaId: 9,
-          baladia: "بوفاريك",
-          quantity: 3,
-          price: 5600,
-          status: "delivered",
-          note: "الدفع نقداً"
-        }
-      ];
-      localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(initial));
-      return initial;
-    }
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return [];
-    }
-  },
-
-  saveOrders(orders) {
-    localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(orders));
-  },
-
-  addOrder(orderData) {
-    const orders = this.getOrders();
-    const newId = "ORD-" + Math.floor(1000 + Math.random() * 9000);
-    const dateStr = new Date().toLocaleString("fr-FR", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit"
-    }).replace(",", "");
-
-    const newOrder = {
-      id: newId,
-      createdAt: dateStr,
-      status: "new",
-      ...orderData
-    };
-
-    orders.unshift(newOrder);
-    this.saveOrders(orders);
-    return newOrder;
-  },
-
-  updateStatus(orderId, newStatus) {
-    const orders = this.getOrders();
-    const idx = orders.findIndex(o => o.id === orderId);
-    if (idx !== -1) {
-      orders[idx].status = newStatus;
-      this.saveOrders(orders);
-      return orders[idx];
-    }
-    return null;
-  },
-
-  deleteOrder(orderId) {
-    const orders = this.getOrders().filter(o => o.id !== orderId);
-    this.saveOrders(orders);
-    return orders;
-  }
-};
