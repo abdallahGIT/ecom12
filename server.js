@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const { Pool } = require('pg');
+const { waitUntil } = require('@vercel/functions');
 
 // Node does not load .env files automatically; do so before reading DATABASE_URL.
 // In Vercel/production the process environment remains authoritative.
@@ -399,6 +400,33 @@ async function publishCompletedOrder(order, lead, requestId) {
   } catch (telegramError) {
     console.error('Order notification delivery failed', { requestId, code: telegramError.code || 'TELEGRAM_ERROR' });
   }
+}
+
+async function refreshOrderDeliveryFee(order, requestId) {
+  try {
+    const { fees } = await getLiveDeliveryRates();
+    const wilayaFee = fees.find(item => item.wilayaId === Number(order.willaya_id));
+    const fee = wilayaFee?.[order.delivery_type === 'stop_desk' ? 'stopDesk' : 'home'];
+    if (!Number.isFinite(fee)) return;
+
+    const updated = await pool.query(`
+      UPDATE orders
+      SET delivery_fee = $1, delivery_fee_pending = false
+      WHERE id = $2 AND delivery_fee_pending = true
+      RETURNING id;
+    `, [fee, order.id]);
+    if (updated.rows[0]) {
+      await pool.query('UPDATE leads SET delivery_fee = $1, updated_at = CURRENT_TIMESTAMP WHERE order_id = $2;', [fee, order.id]);
+    }
+  } catch (error) {
+    console.error('Background delivery fee verification failed', { requestId, code: error.code || 'DELIVERY_FEE_ERROR' });
+  }
+}
+
+function scheduleCompletedOrderTasks(order, lead, requestId, verifyDeliveryFee = false) {
+  const tasks = [publishCompletedOrder(order, lead, requestId)];
+  if (verifyDeliveryFee && order.delivery_fee_pending) tasks.push(refreshOrderDeliveryFee(order, requestId));
+  waitUntil(Promise.allSettled(tasks));
 }
 
 // Trigger initial DB setup
@@ -832,21 +860,9 @@ app.post('/api/orders', async (req, res) => {
       if (!String(willaya || '').trim() || !String(baladia || '').trim()) {
         return res.status(400).json({ success: false, error: 'يرجى إدخال الولاية والبلدية لإكمال عنوان التوصيل' });
       }
-      try {
-        const { fees } = await getLiveDeliveryRates();
-        const wilayaFee = fees.find(item => item.wilayaId === normalizedWilayaId);
-        const authoritativeFee = wilayaFee?.[normalizedDeliveryType === 'stop_desk' ? 'stopDesk' : 'home'];
-        if (Number.isFinite(authoritativeFee)) {
-          finalDeliveryFee = authoritativeFee;
-        } else {
-          finalDeliveryFee = 0;
-          deliveryFeePending = true;
-        }
-      } catch (rateError) {
-        console.error('Could not verify delivery fee:', rateError);
-        finalDeliveryFee = 0;
-        deliveryFeePending = true;
-      }
+      // Save and confirm the order without a courier API round-trip. The
+      // submitted estimate is marked pending, then verified asynchronously.
+      deliveryFeePending = true;
     }
 
     client = await pool.connect();
@@ -861,7 +877,7 @@ app.post('/api/orders', async (req, res) => {
           const existingOrder = await client.query('SELECT * FROM orders WHERE id = $1;', [currentLead.order_id]);
           if (existingOrder.rows[0]) {
             await client.query('COMMIT');
-            await publishCompletedOrder(existingOrder.rows[0], currentLead, req.requestId);
+            scheduleCompletedOrderTasks(existingOrder.rows[0], currentLead, req.requestId, true);
             return res.json({ success: true, order: existingOrder.rows[0], replayed: true });
           }
         }
@@ -953,10 +969,8 @@ app.post('/api/orders', async (req, res) => {
     await client.query('UPDATE products SET stock = stock - $1 WHERE id = $2;', [qty, product.id]);
     await client.query('COMMIT');
 
-    // Edit the existing progress message into a completed-order message. If no
-    // progress message exists, the adapter sends the completed order as one new message.
-    await publishCompletedOrder(result.rows[0], notificationLead, req.requestId);
-
+    // Telegram delivery and courier rate verification run after checkout responds.
+    scheduleCompletedOrderTasks(result.rows[0], notificationLead, req.requestId, !isAdminOrder);
     res.json({ success: true, order: result.rows[0] });
   } catch (err) {
     if (client) {
@@ -1445,7 +1459,7 @@ app.post('/api/leads/:id/convert', async (req, res) => {
     const updatedLead = await client.query("UPDATE leads SET status = 'converted', order_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *;", [id, orderId]);
     await client.query('COMMIT');
 
-    await publishCompletedOrder(orderRes.rows[0], updatedLead.rows[0], req.requestId);
+    scheduleCompletedOrderTasks(orderRes.rows[0], updatedLead.rows[0], req.requestId);
 
     res.json({ success: true, order: orderRes.rows[0] });
   } catch (err) {

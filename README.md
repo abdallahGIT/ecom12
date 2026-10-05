@@ -35,11 +35,11 @@ ECOTRACK_PROVIDER=navexdelivery
 ECOTRACK_API_TOKEN=your-private-token
 ```
 
-For the 48HR service, set `ECOTRACK_PROVIDER` to the provider slug supplied for your account (for example, `48hr`) and add its private token in Vercel or the admin integration form. If the account uses a custom API host, set `ECOTRACK_API_URL` too. The storefront loads provider wilayas, communes, and `/get/fees` through server routes; confirmed customer orders have their delivery fee recalculated on the server. If a fee cannot be loaded, checkout still records the customer order and leaves its delivery fee pending. Never put the token in frontend code or send it in chat.
+For the 48HR service, set `ECOTRACK_PROVIDER` to the provider slug supplied for your account (for example, `48hr`) and add its private token in Vercel or the admin integration form. If the account uses a custom API host, set `ECOTRACK_API_URL` too. The storefront loads provider wilayas, communes, and `/get/fees` through server routes. After checkout saves the order, the server verifies the delivery fee in the background; until that succeeds, the fee is marked pending. Never put the token in frontend code or send it in chat.
 
-If the fee service errors or times out, checkout still saves the order with `delivery_fee_pending` set. The storefront tells the customer the delivery fee will be confirmed by phone. Admin orders display a pending marker and provide **تحديد رسوم التوصيل** to save the confirmed amount later.
+Checkout returns as soon as the order is committed to the database; Telegram completion alerts and courier fee verification run in Vercel's background task lifecycle. If fee verification errors or times out, the order stays saved with `delivery_fee_pending` set. Admin orders display a pending marker and provide **تحديد رسوم التوصيل** to save the confirmed amount later.
 
-The storefront captures a lead as soon as it detects a valid Algerian phone number, then updates that same lead as the customer fills in their name, wilaya, commune, or offer. The admin dashboard refreshes leads and orders every 15 seconds. Meta Pixel receives one `Lead` event per valid phone in the current page session, without sending the phone to Meta.
+The storefront captures a lead as soon as it detects a valid Algerian phone number, then updates that same lead as the customer fills in their name, wilaya, commune, or offer. The admin dashboard refreshes leads and orders every 15 seconds. Meta Pixel receives one `Lead` event when the phone first becomes valid in each entry cycle, without sending the phone to Meta.
 
 ### Telegram lead and order alerts
 

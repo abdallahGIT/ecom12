@@ -961,7 +961,7 @@ function initOrderForm() {
     // 6. Display Confirmation Modal
     document.getElementById("modalOrderId").textContent = newOrder.id;
     document.getElementById("modalOrderDetails").textContent =
-      `${newOrder.fullName} · ${newOrder.willaya || ''} (${newOrder.baladia || ''}) · ${newOrder.quantity} علب · ${newOrder.deliveryFeePending ? `${newOrder.price} ${APP_CONFIG.currency} + رسوم التوصيل تؤكد هاتفياً` : `${(newOrder.price + newOrder.deliveryFee).toLocaleString('fr-FR')} ${APP_CONFIG.currency}`}`;
+      `${newOrder.fullName} · ${newOrder.willaya || ''} (${newOrder.baladia || ''}) · ${newOrder.quantity} علب · ${newOrder.deliveryFeePending ? `${newOrder.price} ${APP_CONFIG.currency} + رسوم التوصيل قيد التحقق` : `${(newOrder.price + newOrder.deliveryFee).toLocaleString('fr-FR')} ${APP_CONFIG.currency}`}`;
 
     modal.classList.add("active");
 
