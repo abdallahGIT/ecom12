@@ -333,6 +333,8 @@ body {
 ====================================================== */
 .order-section {
   padding: 10px 0 40px;
+  /* Keep the form heading visible below the sticky announcement bar on anchor navigation. */
+  scroll-margin-top: 56px;
 }
 
 .order-card {

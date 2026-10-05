@@ -988,8 +988,7 @@ function initSmoothScroll() {
   const orderSection = document.getElementById("order-section");
 
   if (heroCta && orderSection) {
-    heroCta.addEventListener("click", (e) => {
-      e.preventDefault();
+    heroCta.addEventListener("click", () => {
       trackPixelEvent('AddToCart', () => ({
         content_ids: [getPixelContentId()],
         content_type: 'product',
@@ -997,7 +996,6 @@ function initSmoothScroll() {
         num_items: selectedQty
       }));
       sendSheetRecord('CLICKED_NO_PHONE', getSheetOrderData(), 'top_cta');
-      orderSection.scrollIntoView({ behavior: "smooth" });
     });
   }
 }
