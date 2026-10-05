@@ -17,22 +17,44 @@ let communesRequestId = 0;
 const communesCache = new Map();
 let lastSavedLeadSignature = '';
 let queuedLeadPayload = null;
-const PIXEL_LEAD_STORAGE_KEY = 'meta_pixel_lead_phones';
-const pixelLeadPhones = new Set((() => {
-  try { return JSON.parse(sessionStorage.getItem(PIXEL_LEAD_STORAGE_KEY) || '[]'); } catch { return []; }
-})());
-function rememberPixelLeadPhone(phone) {
-  pixelLeadPhones.add(phone);
-  try { sessionStorage.setItem(PIXEL_LEAD_STORAGE_KEY, JSON.stringify([...pixelLeadPhones])); } catch { /* storage unavailable */ }
-}
 let leadCaptureInFlight = false;
 let pixelInitiateCheckoutSent = false;
-let pixelPurchaseSent = false;
-let pixelPurchaseIntentKey = '';
-let pixelPurchaseEventId = '';
+let orderSubmissionInFlight = false;
+const PIXEL_PURCHASE_STORAGE_KEY = 'meta_pixel_purchase_order_ids';
+const pixelPurchaseOrderIds = new Set((() => {
+  try {
+    const savedIds = JSON.parse(sessionStorage.getItem(PIXEL_PURCHASE_STORAGE_KEY) || '[]');
+    return Array.isArray(savedIds) ? savedIds.map(String) : [];
+  } catch { return []; }
+})());
 let pixelReady = false;
 let pixelInitializationFinished = false; // Pixel ID resolved + fbq('init') queued (NOT "fbevents.js loaded")
 const pendingPixelEvents = [];
+
+function trackConfirmedPurchase(order) {
+  const orderId = String(order?.id ?? '').trim();
+  if (!orderId || pixelPurchaseOrderIds.has(orderId)) return false;
+
+  // Remember before queueing so repeated submits/retries cannot emit this order twice.
+  pixelPurchaseOrderIds.add(orderId);
+  try {
+    sessionStorage.setItem(PIXEL_PURCHASE_STORAGE_KEY, JSON.stringify([...pixelPurchaseOrderIds].slice(-100)));
+  } catch { /* Pixel tracking must not interrupt a confirmed order. */ }
+
+  const eventId = `purchase_${orderId.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
+  const quantity = Number(order.quantity) || selectedQty;
+  const price = Number(order.price) || 0;
+  const deliveryFee = Number(order.deliveryFee ?? order.delivery_fee) || 0;
+  trackPixelEvent('Purchase', () => ({
+    content_ids: [getPixelContentId()],
+    content_type: 'product',
+    content_name: getProductName(),
+    value: price + deliveryFee,
+    currency: 'DZD',
+    num_items: quantity
+  }), { eventID: eventId });
+  return true;
+}
 
 function getProductName() {
   return currentProduct?.name || '';
@@ -766,9 +788,12 @@ function initPixelLeadTracking() {
   let lastTrackedPhone = '';
   const captureLeadPixel = () => {
     const phone = normalizeAlgerianPhone(phoneInput.value);
-    if (!isValidAlgerianPhone(phone) || phone === lastTrackedPhone || pixelLeadPhones.has(phone)) return;
+    if (!isValidAlgerianPhone(phone)) {
+      lastTrackedPhone = '';
+      return;
+    }
+    if (phone === lastTrackedPhone) return;
     lastTrackedPhone = phone;
-    rememberPixelLeadPhone(phone);
 
     sendSheetRecord('PHONE_LEAD', getSheetOrderData({ phone }), phone);
 
@@ -789,6 +814,9 @@ function initPixelLeadTracking() {
   phoneInput.addEventListener('blur', captureLeadPixel);
   phoneInput.addEventListener('focus', () => setTimeout(captureLeadPixel, 0));
   window.addEventListener('pageshow', captureLeadPixel);
+  document.getElementById('kakiOrderForm')?.addEventListener('reset', () => {
+    window.setTimeout(() => { lastTrackedPhone = ''; }, 0);
+  });
   captureLeadPixel();
 }
 
@@ -815,6 +843,7 @@ function initOrderForm() {
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
+    if (orderSubmissionInFlight) return;
 
     const fullNameInput = document.getElementById("fullName");
     const phoneInput = document.getElementById("phone");
@@ -844,53 +873,13 @@ function initOrderForm() {
       return;
     }
 
+    orderSubmissionInFlight = true;
+
     const wilayaObj = shippingWilayas.find(w => w.id === willayaId);
     const offer = APP_CONFIG.offers[selectedQty] || APP_CONFIG.offers[1];
     const pricing = updateTotalPrice();
     const prodName = getProductName();
     const prodId = currentProduct ? currentProduct.id : null;
-
-    // Purchase means a fully validated order intent. It is emitted before any
-    // Database/Telegram/Sheet request and is independent from their result.
-    const purchaseIntentKey = JSON.stringify({
-      productId: prodId,
-      quantity: selectedQty,
-      phone,
-      fullName,
-      willayaId,
-      baladia
-    });
-    if (purchaseIntentKey !== pixelPurchaseIntentKey) {
-      pixelPurchaseIntentKey = purchaseIntentKey;
-      pixelPurchaseEventId = window.crypto?.randomUUID?.()
-        || `purchase_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-      pixelPurchaseSent = false;
-    }
-    if (!pixelPurchaseSent) {
-      pixelPurchaseSent = true;
-      const purchaseQty = selectedQty;
-      const purchaseValue = Number(pricing.total);
-      trackPixelEvent('Purchase', () => ({
-        content_ids: [getPixelContentId()],
-        content_type: 'product',
-        content_name: prodName,
-        value: purchaseValue,
-        currency: 'DZD',
-        num_items: purchaseQty
-      }), { eventID: pixelPurchaseEventId });
-
-      sendSheetRecord('FULL_ORDER', getSheetOrderData({
-        phone,
-        order_id: pixelPurchaseEventId,
-        full_name: fullName,
-        wilaya_id: willayaId,
-        baladia,
-        quantity: selectedQty,
-        price: offer.price,
-        delivery_fee: pricing.deliveryFee ?? 0,
-        total: pricing.total
-      }), pixelPurchaseEventId);
-    }
 
     submitBtn.disabled = true;
     submitBtn.innerHTML = `<span>جاري التأكيد...</span>`;
@@ -938,12 +927,28 @@ function initOrderForm() {
       };
     } catch (err) {
       console.error("Order could not be saved:", err);
+      orderSubmissionInFlight = false;
       submitBtn.disabled = false;
       submitBtn.classList.remove("confirmed");
       submitBtn.innerHTML = `<span>تأكيد الطلب الآن</span>`;
       alert(err.message || 'تعذر الاتصال بالخادم. يرجى المحاولة مرة أخرى.');
       return;
     }
+
+    // Purchase is reported only after the server confirms the order was saved.
+    // The database order ID makes it idempotent across retries and duplicate submits.
+    trackConfirmedPurchase(newOrder);
+    sendSheetRecord('FULL_ORDER', getSheetOrderData({
+      phone: newOrder.phone,
+      order_id: newOrder.id,
+      full_name: newOrder.fullName,
+      wilaya_id: newOrder.willayaId,
+      baladia: newOrder.baladia,
+      quantity: newOrder.quantity,
+      price: newOrder.price,
+      delivery_fee: newOrder.deliveryFee,
+      total: newOrder.price + newOrder.deliveryFee
+    }), String(newOrder.id));
 
     // EcoTrack dispatch is intentionally server-side and is triggered from the admin dashboard.
     // This keeps the courier token out of the browser and lets staff verify each order first.
@@ -965,12 +970,11 @@ function initOrderForm() {
     initSessionToken();
     lastSavedLeadSignature = '';
     pixelInitiateCheckoutSent = false;
-    pixelPurchaseSent = false;
-    pixelPurchaseIntentKey = '';
-    pixelPurchaseEventId = '';
 
     // Reset Form inputs for fresh state if they dismiss modal
     form.reset();
+    orderSubmissionInFlight = false;
+    updateSubmitState();
   });
 
   if (modalClose && modal) {
