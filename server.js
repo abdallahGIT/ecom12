@@ -10,7 +10,7 @@ const { Pool } = require('pg');
 // In Vercel/production the process environment remains authoritative.
 try { process.loadEnvFile(); } catch { /* .env is optional in deployed environments */ }
 
-const { notifyNewLead, notifyNewOrder } = require('./telegram');
+const { notifyLeadProgress, notifyOrderComplete, isTelegramConfigured, leadProgressMessage, orderMessage } = require('./telegram');
 const {
   getSettings: getEcoTrackSettings,
   validateToken: validateEcoTrackToken,
@@ -264,6 +264,8 @@ async function initDb() {
         ALTER TABLE leads ADD COLUMN IF NOT EXISTS order_id VARCHAR(50) REFERENCES orders(id) ON DELETE SET NULL;
         ALTER TABLE leads ADD COLUMN IF NOT EXISTS telegram_notified_at TIMESTAMP WITH TIME ZONE;
         ALTER TABLE leads ADD COLUMN IF NOT EXISTS telegram_notification_claimed_at TIMESTAMP WITH TIME ZONE;
+        ALTER TABLE leads ADD COLUMN IF NOT EXISTS telegram_message_id BIGINT;
+        ALTER TABLE leads ADD COLUMN IF NOT EXISTS telegram_message_text TEXT;
       `);
 
       // 4. Settings table (Pixel, EcoTrack, etc.)
@@ -372,6 +374,33 @@ async function getLiveDeliveryRates() {
   return { ...value, settings };
 }
 
+async function publishCompletedOrder(order, lead, requestId) {
+  try {
+    let latestLead = lead;
+    if (lead?.id && !lead.telegram_message_id && lead.telegram_notification_claimed_at) {
+      const deadline = Date.now() + 3200;
+      while (Date.now() < deadline && !latestLead.telegram_message_id && latestLead.telegram_notification_claimed_at) {
+        await new Promise(resolve => setTimeout(resolve, 150));
+        const refresh = await pool.query('SELECT * FROM leads WHERE id = $1;', [lead.id]);
+        latestLead = refresh.rows[0] || latestLead;
+      }
+    }
+    const delivery = await notifyOrderComplete(order, latestLead?.telegram_message_id);
+    if (delivery.sent && lead?.id) {
+      await pool.query(`
+        UPDATE leads
+        SET telegram_message_id = COALESCE($2, telegram_message_id),
+            telegram_message_text = $3,
+            telegram_notified_at = CURRENT_TIMESTAMP,
+            telegram_notification_claimed_at = NULL
+        WHERE id = $1;
+      `, [lead.id, delivery.messageId, orderMessage(order)]);
+    }
+  } catch (telegramError) {
+    console.error('Order notification delivery failed', { requestId, code: telegramError.code || 'TELEGRAM_ERROR' });
+  }
+}
+
 // Trigger initial DB setup
 initDb().catch(e => console.warn('Non-blocking DB init:', e.message));
 
@@ -469,7 +498,14 @@ app.get('/api/health', async (req, res) => {
   try {
     await initDb();
     await pool.query('SELECT 1;');
-    res.json({ status: 'ok', dependencies: { database: 'connected' }, requestId: req.requestId });
+    res.json({
+      status: 'ok',
+      dependencies: {
+        database: 'connected',
+        telegram: isTelegramConfigured() ? 'configured' : 'not_configured'
+      },
+      requestId: req.requestId
+    });
   } catch (err) {
     console.error('Database readiness check failed', { requestId: req.requestId, code: err.code });
     res.status(503).json({ status: 'error', dependencies: { database: 'unavailable' }, requestId: req.requestId });
@@ -815,6 +851,7 @@ app.post('/api/orders', async (req, res) => {
 
     client = await pool.connect();
     await client.query('BEGIN');
+    let notificationLead = null;
     if (sessionToken) {
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0));', [sessionToken]);
       const lockedLead = await client.query('SELECT * FROM leads WHERE session_token = $1 FOR UPDATE;', [sessionToken]);
@@ -824,6 +861,7 @@ app.post('/api/orders', async (req, res) => {
           const existingOrder = await client.query('SELECT * FROM orders WHERE id = $1;', [currentLead.order_id]);
           if (existingOrder.rows[0]) {
             await client.query('COMMIT');
+            await publishCompletedOrder(existingOrder.rows[0], currentLead, req.requestId);
             return res.json({ success: true, order: existingOrder.rows[0], replayed: true });
           }
         }
@@ -874,7 +912,7 @@ app.post('/api/orders', async (req, res) => {
 
     // If sessionToken was attached, mark corresponding lead as converted
     if (sessionToken) {
-      await client.query(`
+      const savedLead = await client.query(`
         INSERT INTO leads (
           id, session_token, product_id, product_name, full_name, phone,
           willaya, willaya_id, baladia, quantity, price, delivery_fee, status, updated_at, order_id
@@ -892,7 +930,8 @@ app.post('/api/orders', async (req, res) => {
           delivery_fee = EXCLUDED.delivery_fee,
           status = 'converted',
           order_id = EXCLUDED.order_id,
-          updated_at = CURRENT_TIMESTAMP;
+          updated_at = CURRENT_TIMESTAMP
+        RETURNING *;
       `, [
         `LEAD-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`,
         String(sessionToken).slice(0, 100),
@@ -908,18 +947,15 @@ app.post('/api/orders', async (req, res) => {
         finalDeliveryFee,
         orderId
       ]);
+      notificationLead = savedLead.rows[0];
     }
 
     await client.query('UPDATE products SET stock = stock - $1 WHERE id = $2;', [qty, product.id]);
     await client.query('COMMIT');
 
-    // Send an operations alert only after the order is committed. Telegram has no
-    // Neon dependency and a delivery failure must never undo a confirmed order.
-    try {
-      await notifyNewOrder(result.rows[0]);
-    } catch (telegramError) {
-      console.error('Order notification delivery failed', { requestId: req.requestId, code: telegramError.code || 'TELEGRAM_ERROR' });
-    }
+    // Edit the existing progress message into a completed-order message. If no
+    // progress message exists, the adapter sends the completed order as one new message.
+    await publishCompletedOrder(result.rows[0], notificationLead, req.requestId);
 
     res.json({ success: true, order: result.rows[0] });
   } catch (err) {
@@ -1215,8 +1251,8 @@ app.post('/api/leads', async (req, res) => {
     } = req.body;
 
     const normalizedPhone = normalizeAlgerianPhone(phone);
-    if (!isValidAlgerianPhone(normalizedPhone)) {
-      return res.status(422).json({ success: false, error: 'رقم الهاتف الجزائري غير صالح', validPhoneRequired: true });
+    if (normalizedPhone.replace(/\D/g, '').length < 3) {
+      return res.status(422).json({ success: false, error: 'أدخل ثلاثة أرقام على الأقل لبدء حفظ بيانات الطلب' });
     }
 
     const token = sessionToken || `sess_${crypto.randomUUID()}`;
@@ -1262,30 +1298,52 @@ app.post('/api/leads', async (req, res) => {
     ]);
 
     const lead = result.rows[0];
-    const claim = await pool.query(`
-      UPDATE leads
-      SET telegram_notification_claimed_at = CURRENT_TIMESTAMP
-      WHERE id = $1
-        AND telegram_notified_at IS NULL
-        AND (telegram_notification_claimed_at IS NULL OR telegram_notification_claimed_at < CURRENT_TIMESTAMP - INTERVAL '2 minutes')
-      RETURNING *;
-    `, [lead.id]);
-    if (claim.rows[0]) {
-      try {
-        const delivery = await notifyNewLead(claim.rows[0]);
-        if (delivery.sent) {
-          await pool.query(`
-            UPDATE leads
-            SET telegram_notified_at = CURRENT_TIMESTAMP, telegram_notification_claimed_at = NULL
-            WHERE id = $1;
-          `, [lead.id]);
-        } else {
-          await pool.query('UPDATE leads SET telegram_notification_claimed_at = NULL WHERE id = $1;', [lead.id]);
+    const messageText = leadProgressMessage(lead);
+    if (lead.status !== 'converted' && lead.telegram_message_text !== messageText) {
+      const claim = await pool.query(`
+        UPDATE leads
+        SET telegram_notification_claimed_at = CURRENT_TIMESTAMP
+        WHERE id = $1 AND status <> 'converted'
+          AND (telegram_notification_claimed_at IS NULL OR telegram_notification_claimed_at < CURRENT_TIMESTAMP - INTERVAL '2 minutes')
+        RETURNING *;
+      `, [lead.id]);
+      if (claim.rows[0]) {
+        try {
+          const delivery = await notifyLeadProgress(claim.rows[0]);
+          if (delivery.sent) {
+            const savedMessage = await pool.query(`
+              UPDATE leads
+              SET telegram_message_id = COALESCE($2, telegram_message_id),
+                  telegram_message_text = $3,
+                  telegram_notified_at = CURRENT_TIMESTAMP,
+                  telegram_notification_claimed_at = NULL
+              WHERE id = $1 AND status <> 'converted'
+              RETURNING id;
+            `, [lead.id, delivery.messageId, messageText]);
+            if (!savedMessage.rows[0]) {
+              const latestLead = (await pool.query('SELECT * FROM leads WHERE id = $1;', [lead.id])).rows[0];
+              if (latestLead?.order_id) {
+                const completedOrder = (await pool.query('SELECT * FROM orders WHERE id = $1;', [latestLead.order_id])).rows[0];
+                if (completedOrder) {
+                  const completed = await notifyOrderComplete(completedOrder, latestLead.telegram_message_id || delivery.messageId);
+                  if (completed.sent) {
+                    await pool.query(`
+                      UPDATE leads SET telegram_message_id = COALESCE($2, telegram_message_id),
+                        telegram_message_text = $3, telegram_notified_at = CURRENT_TIMESTAMP,
+                        telegram_notification_claimed_at = NULL WHERE id = $1;
+                    `, [lead.id, completed.messageId, orderMessage(completedOrder)]);
+                  }
+                }
+              }
+            }
+          } else {
+            await pool.query('UPDATE leads SET telegram_notification_claimed_at = NULL WHERE id = $1;', [lead.id]);
+          }
+        } catch (telegramError) {
+          console.error('Lead notification delivery failed', { requestId: req.requestId, code: telegramError.code || 'TELEGRAM_ERROR' });
+          // Keep the short claim lease if Telegram's response was uncertain; it may
+          // have accepted the send/edit before the connection timed out.
         }
-      } catch (telegramError) {
-        console.error('Lead notification delivery failed', { requestId: req.requestId, code: telegramError.code || 'TELEGRAM_ERROR' });
-        // Keep the two-minute claim lease after an uncertain result. Telegram may
-        // have accepted the message before the response was interrupted.
       }
     }
 
@@ -1384,14 +1442,10 @@ app.post('/api/leads/:id/convert', async (req, res) => {
       'تم تأكيد الطلب هاتفياً من السلة المهجورة'
     ]);
 
-    await client.query("UPDATE leads SET status = 'converted', order_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1;", [id, orderId]);
+    const updatedLead = await client.query("UPDATE leads SET status = 'converted', order_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *;", [id, orderId]);
     await client.query('COMMIT');
 
-    try {
-      await notifyNewOrder(orderRes.rows[0]);
-    } catch (telegramError) {
-      console.error('Order notification delivery failed', { requestId: req.requestId, code: telegramError.code || 'TELEGRAM_ERROR' });
-    }
+    await publishCompletedOrder(orderRes.rows[0], updatedLead.rows[0], req.requestId);
 
     res.json({ success: true, order: orderRes.rows[0] });
   } catch (err) {

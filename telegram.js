@@ -11,34 +11,42 @@ function telegramConfiguration(env = process.env) {
   };
 }
 
-async function sendTelegramMessage(text, options = {}) {
+function isTelegramConfigured(env = process.env) {
+  const { token, chatId } = telegramConfiguration(env);
+  return Boolean(token && chatId);
+}
+
+async function telegramRequest(method, parameters, options = {}) {
   const { token, chatId } = telegramConfiguration(options.env);
-  if (!token || !chatId) return { sent: false, reason: 'not_configured' };
+  if (!token || !chatId) return { sent: false, reason: 'not_configured', messageId: null };
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TELEGRAM_API_TIMEOUT_MS);
   try {
-    const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text }),
+      body: JSON.stringify({ chat_id: chatId, ...parameters }),
       signal: controller.signal
     });
     const result = await response.json().catch(() => ({}));
+    if (result.ok === false && /message is not modified/i.test(result.description || '')) {
+      return { sent: true, unchanged: true, messageId: parameters.message_id || null };
+    }
     if (!response.ok || result.ok !== true) {
-      const error = new Error(`Telegram sendMessage failed (HTTP ${response.status})`);
+      const error = new Error(`Telegram ${method} failed (HTTP ${response.status})`);
       error.code = 'TELEGRAM_DELIVERY_FAILED';
       throw error;
     }
-    return { sent: true, messageId: result.result?.message_id || null };
+    return { sent: true, messageId: result.result?.message_id || parameters.message_id || null };
   } finally {
     clearTimeout(timeout);
   }
 }
 
-async function notifyNewOrder(order, options = {}) {
+function orderMessage(order) {
   const lines = [
-    'طلب جديد في Maison Vert',
+    '✅ طلب مكتمل - Maison Vert',
     `رقم الطلب: ${order.id}`,
     `الزبون: ${order.full_name || 'غير محدد'}`,
     `الهاتف: ${order.phone}`,
@@ -46,19 +54,40 @@ async function notifyNewOrder(order, options = {}) {
     `الكمية: ${Number(order.quantity) || 1}`,
     `السعر: ${Number(order.price) || 0} دج`
   ];
-  return sendTelegramMessage(lines.join('\n'), options);
+  return lines.join('\n');
 }
 
-async function notifyNewLead(lead, options = {}) {
+function leadProgressMessage(lead) {
   const lines = [
-    'عميل مهتم - طلب غير مكتمل',
+    '📝 محاولة تعبئة طلب - غير مكتمل',
     `رقم العميل: ${lead.id}`,
     `الاسم: ${lead.full_name || 'غير مسجل بعد'}`,
     `الهاتف: ${lead.phone}`,
     `الولاية والبلدية: ${[lead.willaya, lead.baladia].filter(Boolean).join(' · ') || 'غير مكتمل'}`,
     `المنتج: ${lead.product_name || 'غير محدد'}`
   ];
-  return sendTelegramMessage(lines.join('\n'), options);
+  return lines.join('\n');
 }
 
-module.exports = { sendTelegramMessage, notifyNewLead, notifyNewOrder };
+async function updateOrSendMessage(text, messageId, options = {}) {
+  if (messageId) {
+    return telegramRequest('editMessageText', { message_id: Number(messageId), text }, options);
+  }
+  return telegramRequest('sendMessage', { text }, options);
+}
+
+async function notifyLeadProgress(lead, options = {}) {
+  return updateOrSendMessage(leadProgressMessage(lead), lead.telegram_message_id, options);
+}
+
+async function notifyOrderComplete(order, messageId, options = {}) {
+  return updateOrSendMessage(orderMessage(order), messageId, options);
+}
+
+module.exports = {
+  notifyLeadProgress,
+  notifyOrderComplete,
+  isTelegramConfigured,
+  orderMessage,
+  leadProgressMessage
+};

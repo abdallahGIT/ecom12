@@ -620,10 +620,11 @@ function initAutoLeadCapture() {
   const willayaSelect = document.getElementById("willayaSelect");
   const baladiaSelect = document.getElementById("baladiaSelect");
 
-  // Capture immediately after a complete, valid phone is typed or autofilled.
+  // Start lead capture as soon as at least three phone digits are entered, then
+  // coalesce fast keystrokes so the server can edit one Telegram message.
   const debouncedCapture = () => {
     clearTimeout(leadCaptureTimer);
-    leadCaptureTimer = setTimeout(triggerAutoLeadCapture, 100);
+    leadCaptureTimer = setTimeout(triggerAutoLeadCapture, 300);
   };
 
   if (phoneInput) {
@@ -662,7 +663,7 @@ async function triggerAutoLeadCapture() {
     : "";
   const baladia = baladiaSelect ? baladiaSelect.value.trim() : "";
 
-  if (!isValidAlgerianPhone(phone)) return;
+  if (phone.replace(/\D/g, '').length < 3) return;
 
   const offer = APP_CONFIG.offers[selectedQty] || APP_CONFIG.offers[1];
   const deliveryFee = getSelectedDeliveryFee();

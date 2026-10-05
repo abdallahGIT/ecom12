@@ -65,10 +65,14 @@ async function checkDbHealth() {
     if (res.ok && data.status === 'ok' && data.dependencies?.database === 'connected') {
       if (badge) {
         badge.className = "db-status-badge online";
-        badge.title = "قاعدة بيانات Neon متصلة";
+        badge.title = data.dependencies.telegram === 'configured'
+          ? "قاعدة البيانات وتنبيهات Telegram جاهزة"
+          : "قاعدة البيانات متصلة، لكن TELEGRAM_BOT_TOKEN غير مضبوط";
       }
       if (text) {
-        text.textContent = "🟢 قاعدة البيانات متصلة";
+        text.textContent = data.dependencies.telegram === 'configured'
+          ? "🟢 قاعدة البيانات وتنبيهات Telegram جاهزة"
+          : "🟢 قاعدة البيانات متصلة · 🔴 تنبيهات Telegram غير مهيأة";
       }
       return true;
     }
