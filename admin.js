@@ -62,13 +62,13 @@ async function checkDbHealth() {
   try {
     const res = await fetch('/api/health');
     const data = await res.json();
-    if (data.status === 'ok' && data.db === 'connected') {
+    if (res.ok && data.status === 'ok' && data.dependencies?.database === 'connected') {
       if (badge) {
         badge.className = "db-status-badge online";
-        badge.title = `قاعدة بيانات Neon متصلة ⚡ (توقيت السيرفر: ${data.neon_time})`;
+        badge.title = "قاعدة بيانات Neon متصلة";
       }
       if (text) {
-        text.textContent = `🟢 Neon DB متصل (${data.counts.products} منتجات · ${data.counts.orders} طلبات · ${data.counts.leads} سلات مهجورة)`;
+        text.textContent = "🟢 قاعدة البيانات متصلة";
       }
       return true;
     }

@@ -697,19 +697,30 @@ async function triggerAutoLeadCapture() {
       const nextSignature = JSON.stringify(nextPayload);
       if (nextSignature !== lastSavedLeadSignature) {
         try {
-          const requestOptions = {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(nextPayload)
-          };
-          if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
-            requestOptions.signal = AbortSignal.timeout(5000);
+          let saved = false;
+          let lastError;
+          for (let attempt = 0; attempt < 3 && !saved; attempt += 1) {
+            try {
+              const requestOptions = {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(nextPayload)
+              };
+              if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+                requestOptions.signal = AbortSignal.timeout(5000);
+              }
+              const response = await fetch('/api/leads', requestOptions);
+              const result = await response.json().catch(() => ({}));
+              if (!response.ok || !result.success) {
+                throw new Error(result.error || `تعذر حفظ بيانات الزبون (${response.status})`);
+              }
+              saved = true;
+            } catch (err) {
+              lastError = err;
+              if (attempt < 2) await new Promise(resolve => window.setTimeout(resolve, 500 * (2 ** attempt)));
+            }
           }
-          const response = await fetch('/api/leads', requestOptions);
-          const result = await response.json().catch(() => ({}));
-          if (!response.ok || !result.success) {
-            throw new Error(result.error || `تعذر حفظ بيانات الزبون (${response.status})`);
-          }
+          if (!saved) throw lastError || new Error('تعذر حفظ بيانات الزبون');
           lastSavedLeadSignature = nextSignature;
         } catch (err) {
           console.warn("Could not sync draft lead to DB:", err);

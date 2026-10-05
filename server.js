@@ -10,6 +10,7 @@ const { Pool } = require('pg');
 // In Vercel/production the process environment remains authoritative.
 try { process.loadEnvFile(); } catch { /* .env is optional in deployed environments */ }
 
+const { notifyNewLead, notifyNewOrder } = require('./telegram');
 const {
   getSettings: getEcoTrackSettings,
   validateToken: validateEcoTrackToken,
@@ -81,6 +82,16 @@ function isProtectedApi(req) {
   if (pathName === '/api/leads') return req.method !== 'POST';
   if (pathName.startsWith('/api/leads/')) return true;
   return false;
+}
+
+function sendApiError(req, res, err, context = 'API request') {
+  const status = Number.isInteger(err.status) && err.status >= 400 && err.status < 500 ? err.status : 500;
+  console.error(context, { requestId: req.requestId, status, code: err.code });
+  res.status(status).json({
+    success: false,
+    error: status >= 500 ? 'حدث خطأ في الخادم. أعد المحاولة باستخدام رقم الطلب.' : err.message,
+    requestId: req.requestId
+  });
 }
 
 // ==========================================
@@ -250,6 +261,9 @@ async function initDb() {
         ALTER TABLE leads ADD COLUMN IF NOT EXISTS willaya_id INT;
         ALTER TABLE leads ADD COLUMN IF NOT EXISTS delivery_fee INT NOT NULL DEFAULT 0;
         ALTER TABLE leads ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+        ALTER TABLE leads ADD COLUMN IF NOT EXISTS order_id VARCHAR(50) REFERENCES orders(id) ON DELETE SET NULL;
+        ALTER TABLE leads ADD COLUMN IF NOT EXISTS telegram_notified_at TIMESTAMP WITH TIME ZONE;
+        ALTER TABLE leads ADD COLUMN IF NOT EXISTS telegram_notification_claimed_at TIMESTAMP WITH TIME ZONE;
       `);
 
       // 4. Settings table (Pixel, EcoTrack, etc.)
@@ -367,6 +381,11 @@ initDb().catch(e => console.warn('Non-blocking DB init:', e.message));
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
+app.use((req, res, next) => {
+  req.requestId = crypto.randomUUID();
+  res.setHeader('X-Request-Id', req.requestId);
+  next();
+});
 
 // Admin page and management APIs require a signed HttpOnly session cookie.
 app.use((req, res, next) => {
@@ -449,23 +468,11 @@ app.use(express.static(__dirname));
 app.get('/api/health', async (req, res) => {
   try {
     await initDb();
-    const timeRes = await pool.query('SELECT NOW() as current_time;');
-    const prodRes = await pool.query('SELECT COUNT(*) FROM products;');
-    const orderRes = await pool.query('SELECT COUNT(*) FROM orders;');
-    const leadRes = await pool.query("SELECT COUNT(*) FROM leads WHERE status != 'converted';");
-
-    res.json({
-      status: 'ok',
-      db: 'connected',
-      neon_time: timeRes.rows[0].current_time,
-      counts: {
-        products: parseInt(prodRes.rows[0].count, 10),
-        orders: parseInt(orderRes.rows[0].count, 10),
-        leads: parseInt(leadRes.rows[0].count, 10)
-      }
-    });
+    await pool.query('SELECT 1;');
+    res.json({ status: 'ok', dependencies: { database: 'connected' }, requestId: req.requestId });
   } catch (err) {
-    res.status(500).json({ status: 'error', db: err.message });
+    console.error('Database readiness check failed', { requestId: req.requestId, code: err.code });
+    res.status(503).json({ status: 'error', dependencies: { database: 'unavailable' }, requestId: req.requestId });
   }
 });
 
@@ -488,7 +495,7 @@ app.post('/api/upload', upload.array('photos', 6), (req, res) => {
 
     res.json({ success: true, urls: fileUrls });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    sendApiError(req, res, err);
   }
 });
 
@@ -510,7 +517,7 @@ app.get('/api/products', async (req, res) => {
     const result = await pool.query(query, slug ? [slug] : []);
     res.json({ success: true, products: result.rows });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    sendApiError(req, res, err);
   }
 });
 
@@ -530,7 +537,7 @@ app.get('/api/products/:identifier', async (req, res) => {
     }
     res.json({ success: true, product: result.rows[0] });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    sendApiError(req, res, err);
   }
 });
 
@@ -692,10 +699,10 @@ app.delete('/api/products/:id', async (req, res) => {
     }
     console.error('Error deleting product:', err);
     const foreignKeyFailure = err.code === '23503';
-    res.status(foreignKeyFailure ? 409 : 500).json({
-      success: false,
-      error: foreignKeyFailure ? 'لا يمكن حذف المنتج لأنه مرتبط بسجلات أخرى' : err.message
-    });
+    if (foreignKeyFailure) {
+      return res.status(409).json({ success: false, error: 'لا يمكن حذف المنتج لأنه مرتبط بسجلات أخرى' });
+    }
+    sendApiError(req, res, err, 'Product deletion failed');
   } finally {
     if (client) client.release();
   }
@@ -735,7 +742,7 @@ app.get('/api/orders', async (req, res) => {
     res.set('Cache-Control', 'no-store');
     res.json({ success: true, orders: result.rows });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    sendApiError(req, res, err);
   }
 });
 
@@ -744,22 +751,23 @@ app.post('/api/orders', async (req, res) => {
   let client;
   try {
     await initDb();
-    const {
-      id,
-      fullName,
-      phone,
-      willaya,
-      baladia,
-      quantity,
-      price,
-      productId,
-      productName,
-      sessionToken,
-      note,
-      deliveryType,
-      deliveryFee,
-      willayaId
-    } = req.body;
+    const body = req.body || {};
+    const sessionToken = String(body.sessionToken || '').slice(0, 100);
+    const leadResult = sessionToken
+      ? await pool.query('SELECT * FROM leads WHERE session_token = $1 LIMIT 1;', [sessionToken])
+      : { rows: [] };
+    const savedLead = leadResult.rows[0] || {};
+    const fullName = body.fullName || savedLead.full_name;
+    const phone = body.phone || savedLead.phone;
+    const willaya = String(body.willaya || savedLead.willaya || '').trim();
+    const baladia = String(body.baladia || savedLead.baladia || '').trim();
+    const quantity = body.quantity ?? savedLead.quantity;
+    const price = body.price;
+    const productId = body.productId || savedLead.product_id;
+    const note = body.note;
+    const deliveryType = body.deliveryType;
+    const deliveryFee = body.deliveryFee;
+    const willayaId = body.willayaId ?? savedLead.willaya_id;
 
     const cleanName = String(fullName || '').trim() || 'زبون بدون اسم';
     const normalizedPhone = normalizeAlgerianPhone(phone);
@@ -785,6 +793,9 @@ app.post('/api/orders', async (req, res) => {
       if (!Number.isInteger(normalizedWilayaId) || normalizedWilayaId < 1 || normalizedWilayaId > 58) {
         return res.status(400).json({ success: false, error: 'يرجى اختيار ولاية صحيحة' });
       }
+      if (!String(willaya || '').trim() || !String(baladia || '').trim()) {
+        return res.status(400).json({ success: false, error: 'يرجى إدخال الولاية والبلدية لإكمال عنوان التوصيل' });
+      }
       try {
         const { fees } = await getLiveDeliveryRates();
         const wilayaFee = fees.find(item => item.wilayaId === normalizedWilayaId);
@@ -804,6 +815,22 @@ app.post('/api/orders', async (req, res) => {
 
     client = await pool.connect();
     await client.query('BEGIN');
+    if (sessionToken) {
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0));', [sessionToken]);
+      const lockedLead = await client.query('SELECT * FROM leads WHERE session_token = $1 FOR UPDATE;', [sessionToken]);
+      const currentLead = lockedLead.rows[0];
+      if (currentLead?.status === 'converted') {
+        if (currentLead.order_id) {
+          const existingOrder = await client.query('SELECT * FROM orders WHERE id = $1;', [currentLead.order_id]);
+          if (existingOrder.rows[0]) {
+            await client.query('COMMIT');
+            return res.json({ success: true, order: existingOrder.rows[0], replayed: true });
+          }
+        }
+        await client.query('ROLLBACK');
+        return res.status(409).json({ success: false, error: 'تعذر التحقق من الطلب السابق لهذا النموذج. يرجى التواصل مع المتجر قبل إعادة الطلب.' });
+      }
+    }
     const productResult = await client.query(
       'SELECT * FROM products WHERE id = $1 AND ($2::boolean OR is_active = true) FOR UPDATE',
       [numericProductId, isAdminOrder]
@@ -850,8 +877,8 @@ app.post('/api/orders', async (req, res) => {
       await client.query(`
         INSERT INTO leads (
           id, session_token, product_id, product_name, full_name, phone,
-          willaya, willaya_id, baladia, quantity, price, delivery_fee, status, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'converted', CURRENT_TIMESTAMP)
+          willaya, willaya_id, baladia, quantity, price, delivery_fee, status, updated_at, order_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'converted', CURRENT_TIMESTAMP, $13)
         ON CONFLICT (session_token) DO UPDATE SET
           product_id = EXCLUDED.product_id,
           product_name = EXCLUDED.product_name,
@@ -864,6 +891,7 @@ app.post('/api/orders', async (req, res) => {
           price = EXCLUDED.price,
           delivery_fee = EXCLUDED.delivery_fee,
           status = 'converted',
+          order_id = EXCLUDED.order_id,
           updated_at = CURRENT_TIMESTAMP;
       `, [
         `LEAD-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`,
@@ -877,20 +905,34 @@ app.post('/api/orders', async (req, res) => {
         baladia ? baladia.trim() : '',
         qty,
         finalPrice,
-        finalDeliveryFee
+        finalDeliveryFee,
+        orderId
       ]);
     }
 
     await client.query('UPDATE products SET stock = stock - $1 WHERE id = $2;', [qty, product.id]);
     await client.query('COMMIT');
 
+    // Send an operations alert only after the order is committed. Telegram has no
+    // Neon dependency and a delivery failure must never undo a confirmed order.
+    try {
+      await notifyNewOrder(result.rows[0]);
+    } catch (telegramError) {
+      console.error('Order notification delivery failed', { requestId: req.requestId, code: telegramError.code || 'TELEGRAM_ERROR' });
+    }
+
     res.json({ success: true, order: result.rows[0] });
   } catch (err) {
     if (client) {
       try { await client.query('ROLLBACK'); } catch {}
     }
-    console.error('Error placing order:', err);
-    res.status(500).json({ success: false, error: err.message });
+    const status = Number.isInteger(err.status) && err.status >= 400 && err.status < 500 ? err.status : 500;
+    if (status === 500) {
+      console.error('Order creation failed', { requestId: req.requestId, code: err.code });
+      res.status(500).json({ success: false, error: 'تعذر حفظ الطلب حالياً. أعد المحاولة باستخدام رقم الطلب.', requestId: req.requestId });
+    } else {
+      sendApiError(req, res, err, 'Order creation rejected');
+    }
   } finally {
     if (client) client.release();
   }
@@ -961,7 +1003,7 @@ app.patch('/api/orders/:id/delivery-fee', async (req, res) => {
     if (!result.rows[0]) return res.status(404).json({ success: false, error: 'الطلب غير موجود' });
     res.json({ success: true, order: result.rows[0] });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    sendApiError(req, res, err);
   }
 });
 
@@ -1112,7 +1154,7 @@ app.delete('/api/orders/:id', async (req, res) => {
     if (client) {
       try { await client.query('ROLLBACK'); } catch {}
     }
-    res.status(500).json({ success: false, error: err.message });
+    sendApiError(req, res, err);
   } finally {
     if (client) client.release();
   }
@@ -1150,7 +1192,7 @@ app.get('/api/leads', async (req, res) => {
     const result = await pool.query(query, params);
     res.json({ success: true, leads: result.rows });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    sendApiError(req, res, err, 'Lead list failed');
   }
 });
 
@@ -1209,20 +1251,47 @@ app.post('/api/leads', async (req, res) => {
       token,
       productId ? parseInt(productId, 10) : null,
       productName || 'بذور الكاكي الفاخرة',
-      fullName ? fullName.trim() : '',
+      String(fullName || '').trim(),
       normalizedPhone,
-      willaya ? willaya.trim() : '',
+      String(willaya || '').trim(),
       willayaId ? parseInt(willayaId, 10) : null,
-      baladia ? baladia.trim() : '',
+      String(baladia || '').trim(),
       qty,
       finalPrice,
       finalDeliveryFee
     ]);
 
-    res.json({ success: true, lead: result.rows[0], sessionToken: token });
+    const lead = result.rows[0];
+    const claim = await pool.query(`
+      UPDATE leads
+      SET telegram_notification_claimed_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+        AND telegram_notified_at IS NULL
+        AND (telegram_notification_claimed_at IS NULL OR telegram_notification_claimed_at < CURRENT_TIMESTAMP - INTERVAL '2 minutes')
+      RETURNING *;
+    `, [lead.id]);
+    if (claim.rows[0]) {
+      try {
+        const delivery = await notifyNewLead(claim.rows[0]);
+        if (delivery.sent) {
+          await pool.query(`
+            UPDATE leads
+            SET telegram_notified_at = CURRENT_TIMESTAMP, telegram_notification_claimed_at = NULL
+            WHERE id = $1;
+          `, [lead.id]);
+        } else {
+          await pool.query('UPDATE leads SET telegram_notification_claimed_at = NULL WHERE id = $1;', [lead.id]);
+        }
+      } catch (telegramError) {
+        console.error('Lead notification delivery failed', { requestId: req.requestId, code: telegramError.code || 'TELEGRAM_ERROR' });
+        // Keep the two-minute claim lease after an uncertain result. Telegram may
+        // have accepted the message before the response was interrupted.
+      }
+    }
+
+    res.json({ success: true, lead, sessionToken: token });
   } catch (err) {
-    console.error('Error auto-capturing lead:', err);
-    res.status(500).json({ success: false, error: err.message });
+    sendApiError(req, res, err, 'Lead capture failed');
   }
 });
 
@@ -1244,7 +1313,7 @@ app.patch('/api/leads/:id/status', async (req, res) => {
 
     res.json({ success: true, lead: result.rows[0] });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    sendApiError(req, res, err);
   }
 });
 
@@ -1315,15 +1384,21 @@ app.post('/api/leads/:id/convert', async (req, res) => {
       'تم تأكيد الطلب هاتفياً من السلة المهجورة'
     ]);
 
-    await client.query("UPDATE leads SET status = 'converted', updated_at = CURRENT_TIMESTAMP WHERE id = $1;", [id]);
+    await client.query("UPDATE leads SET status = 'converted', order_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1;", [id, orderId]);
     await client.query('COMMIT');
+
+    try {
+      await notifyNewOrder(orderRes.rows[0]);
+    } catch (telegramError) {
+      console.error('Order notification delivery failed', { requestId: req.requestId, code: telegramError.code || 'TELEGRAM_ERROR' });
+    }
 
     res.json({ success: true, order: orderRes.rows[0] });
   } catch (err) {
     if (client) {
       try { await client.query('ROLLBACK'); } catch {}
     }
-    res.status(500).json({ success: false, error: err.message });
+    sendApiError(req, res, err, 'Lead conversion failed');
   } finally {
     if (client) client.release();
   }
@@ -1338,7 +1413,7 @@ app.delete('/api/leads/:id', async (req, res) => {
     if (!result.rows[0]) return res.status(404).json({ success: false, error: 'الزبون غير موجود' });
     res.json({ success: true, message: 'تم حذف الزبون بنجاح' });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    sendApiError(req, res, err);
   }
 });
 
@@ -1359,7 +1434,7 @@ app.get('/api/public-settings', async (req, res) => {
       settings: { pixel_id: pixelId }
     });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    sendApiError(req, res, err);
   }
 });
 
@@ -1373,7 +1448,7 @@ app.get('/api/settings', async (req, res) => {
     });
     res.json({ success: true, settings: settingsMap });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    sendApiError(req, res, err);
   }
 });
 
@@ -1397,7 +1472,7 @@ app.post('/api/settings', async (req, res) => {
     }
     res.json({ success: true, message: 'تم حفظ الإعدادات بنجاح' });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    sendApiError(req, res, err);
   }
 });
 
@@ -1417,7 +1492,7 @@ app.use((err, req, res, next) => {
         : 'تعذر معالجة الصور المرفوعة';
     return res.status(400).json({ success: false, error: message });
   }
-  return res.status(err.status || 500).json({ success: false, error: err.message || 'حدث خطأ في الخادم' });
+  return sendApiError(req, res, err, 'Unhandled API error');
 });
 
 // Start Server if executed directly (Local Node.js)
